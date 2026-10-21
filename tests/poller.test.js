@@ -396,6 +396,30 @@ describe('poller.js - 다중 슬롯 병렬 폴링 (pollAllSlots)', () => {
     assert.match(result.slot2.error, /저장된 인증 정보가 없습니다/);
   });
 
+  it('auth.js의 실제 미연동 에러 메시지 발생 시 linked: false로 정확하게 판정해야 한다', async () => {
+    const fetchUsageMock = async (slotId) => {
+      if (slotId === 'slot1') {
+        throw new Error('슬롯 1의 인증 정보를 찾을 수 없습니다. (Codex 로그인이 필요합니다)');
+      }
+      if (slotId === 'slot2') {
+        throw new Error('슬롯 2가 연동되지 않았습니다. ([계정 2 연동하기]를 통해 로그인해 주세요)');
+      }
+    };
+
+    const result = await pollAllSlots({
+      fetchUsageFn: fetchUsageMock,
+      configDir: tempDir,
+    });
+
+    assert.equal(result.slot1.success, false);
+    assert.equal(result.slot1.linked, false);
+    assert.match(result.slot1.error, /인증 정보를 찾을 수 없습니다/);
+
+    assert.equal(result.slot2.success, false);
+    assert.equal(result.slot2.linked, false);
+    assert.match(result.slot2.error, /연동되지 않았습니다/);
+  });
+
   it('임계치에 도달한 슬롯이 있을 때 알림을 자동으로 발송해야 한다', async () => {
     const mockSlot1Metrics = createMockMetrics({ primaryRemaining: 5, primaryResetAt: 1700000000 });
     const mockSlot2Metrics = createMockMetrics({ primaryRemaining: 80 });
@@ -524,6 +548,9 @@ describe('poller.js - 스케줄러 라이프사이클 (startPolling)', () => {
 
   it('onUpdate 콜백에서 예외가 발생하더라도 폴러 루프가 중단되지 않아야 한다', async () => {
     let callCount = 0;
+    const origError = console.error;
+    console.error = () => {}; // 테스트 출력 정숙화
+
     const poller = startPolling(5, () => {
       callCount++;
       throw new Error('콜백 UI 렌더링 실패');
@@ -536,6 +563,7 @@ describe('poller.js - 스케줄러 라이프사이클 (startPolling)', () => {
       await poller.pollNow();
       assert.ok(callCount >= 1);
     } finally {
+      console.error = origError;
       poller.stop();
     }
   });

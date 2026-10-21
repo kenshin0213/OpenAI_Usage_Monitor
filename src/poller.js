@@ -175,7 +175,9 @@ function normalizeSlotResult(slotId, settledResult) {
 
   const err = settledResult.reason;
   const errMsg = err?.message || String(err || '알 수 없는 오류');
-  const isUnlinked = errMsg.includes('저장된 인증 정보가 없습니다') ||
+  const isUnlinked = errMsg.includes('연동되지 않았습니다') ||
+                     errMsg.includes('인증 정보를 찾을 수 없습니다') ||
+                     errMsg.includes('저장된 인증 정보가 없습니다') ||
                      errMsg.includes('인증 정보가 없습니다');
 
   return {
@@ -312,7 +314,9 @@ function startPolling(intervalMinutes = 5, onUpdate, options = {}) {
   const initialPromise = runPoll();
 
   // 2. 주기적 타이머 등록
-  const timerId = setInterval(runPoll, intervalMs);
+  const timerId = setInterval(() => {
+    runPoll().catch(() => {});
+  }, intervalMs);
   if (typeof timerId.unref === 'function') {
     timerId.unref();
   }
