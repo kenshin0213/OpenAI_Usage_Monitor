@@ -299,7 +299,12 @@ function extractEmailFromTokens(tokens) {
   if (!tokens || typeof tokens !== 'object') return null;
   if (tokens.email && typeof tokens.email === 'string') return tokens.email;
   if (tokens.id_token) {
-    return extractEmailFromJwt(tokens.id_token);
+    const email = extractEmailFromJwt(tokens.id_token);
+    if (email) return email;
+  }
+  if (tokens.access_token) {
+    const email = extractEmailFromJwt(tokens.access_token);
+    if (email) return email;
   }
   return null;
 }
@@ -392,4 +397,6 @@ module.exports = {
   saveSlot,
   clearSlot,
   seedSlot1FromCodex,
+  extractEmailFromJwt,
+  extractEmailFromTokens,
 };
