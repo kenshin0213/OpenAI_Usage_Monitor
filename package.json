@@ -1,0 +1,20 @@
+{
+  "name": "openai-usage-monitor",
+  "version": "0.1.0",
+  "description": "Windows 시스템 트레이 기반 OpenAI 듀얼 계정 실시간 사용량 모니터",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test tests/*.test.js"
+  },
+  "keywords": [
+    "openai",
+    "chatgpt",
+    "usage",
+    "monitor",
+    "tray",
+    "windows"
+  ],
+  "author": "",
+  "license": "MIT"
+}
