@@ -631,16 +631,17 @@ class MonitorRenderer {
     if (!this.currentData) return;
     const nowSec = Math.floor(Date.now() / 1000);
     const { el } = this;
+    const toEpochSec = (val) => (val > 1e11 ? Math.floor(val / 1000) : val);
 
     // 슬롯 1 카운트다운
     if (this.currentData.slot1) {
       const s1 = this.currentData.slot1.metrics || this.currentData.slot1;
       if (s1.primaryWindow?.resetAt && el.slot1PrimaryCountdown) {
-        const diff = Math.max(0, s1.primaryWindow.resetAt - nowSec);
+        const diff = Math.max(0, toEpochSec(s1.primaryWindow.resetAt) - nowSec);
         el.slot1PrimaryCountdown.textContent = formatCountdown(diff);
       }
       if (s1.secondaryWindow?.resetAt && el.slot1SecondaryCountdown) {
-        const diff = Math.max(0, s1.secondaryWindow.resetAt - nowSec);
+        const diff = Math.max(0, toEpochSec(s1.secondaryWindow.resetAt) - nowSec);
         el.slot1SecondaryCountdown.textContent = formatCountdown(diff);
       }
     }
@@ -649,11 +650,11 @@ class MonitorRenderer {
     if (this.currentData.slot2 && this.currentData.slot2.linked && !this.isLoggingInSlot2) {
       const s2 = this.currentData.slot2.metrics || this.currentData.slot2;
       if (s2.primaryWindow?.resetAt && el.slot2PrimaryCountdown) {
-        const diff = Math.max(0, s2.primaryWindow.resetAt - nowSec);
+        const diff = Math.max(0, toEpochSec(s2.primaryWindow.resetAt) - nowSec);
         el.slot2PrimaryCountdown.textContent = formatCountdown(diff);
       }
       if (s2.secondaryWindow?.resetAt && el.slot2SecondaryCountdown) {
-        const diff = Math.max(0, s2.secondaryWindow.resetAt - nowSec);
+        const diff = Math.max(0, toEpochSec(s2.secondaryWindow.resetAt) - nowSec);
         el.slot2SecondaryCountdown.textContent = formatCountdown(diff);
       }
     }

@@ -508,9 +508,16 @@ async function initApp() {
     appInstance: electron.app,
   });
 
-  // 5. 백그라운드 사용량 폴러 시작
+  // 5. 백그라운드 사용량 폴러 시작 및 시작 시 자동 실행 레지스트리 동기화
   try {
     const config = await getConfig();
+    if (electron.app?.setLoginItemSettings) {
+      try {
+        electron.app.setLoginItemSettings({ openAtLogin: Boolean(config.startOnBoot) });
+      } catch {
+        // OS 수준 로그인 아이템 설정 실패 무시
+      }
+    }
     const interval = config.pollIntervalMinutes || 5;
     pollerInstance = startPolling(interval, (data) => {
       broadcastUsage(data);

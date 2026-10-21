@@ -277,12 +277,7 @@ function extractEmailFromJwt(token) {
   try {
     const parts = token.split('.');
     if (parts.length < 2) return null;
-    // base64url 대응
-    let base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
-    while (base64.length % 4 !== 0) {
-      base64 += '=';
-    }
-    const payloadJson = Buffer.from(base64, 'base64').toString('utf8');
+    const payloadJson = Buffer.from(parts[1], 'base64url').toString('utf8');
     const payload = JSON.parse(payloadJson);
     return payload.email || payload['https://api.openai.com/profile']?.email || null;
   } catch {
