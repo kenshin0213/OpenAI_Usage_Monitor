@@ -16,5 +16,8 @@
     "windows"
   ],
   "author": "",
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^45.0.0"
+  }
 }
