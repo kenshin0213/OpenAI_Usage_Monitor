@@ -553,6 +553,15 @@ async function initApp() {
 const isElectronRuntime = typeof electron === 'object' && electron !== null && Boolean(electron.app);
 
 if (isElectronRuntime) {
+  // 전역 기본 'Electron' 디렉터리와의 SingletonLock 파일 잠금 충돌을 방지하기 위해 앱 전용 userData 경로 지정
+  electron.app.setName('OpenAI_Usage_Monitor');
+  try {
+    const customUserData = path.join(electron.app.getPath('appData'), 'OpenAI_Usage_Monitor');
+    electron.app.setPath('userData', customUserData);
+  } catch (err) {
+    console.warn('[main] userData 경로 설정 경고:', err.message);
+  }
+
   const gotTheLock = electron.app.requestSingleInstanceLock();
 
   if (!gotTheLock) {
