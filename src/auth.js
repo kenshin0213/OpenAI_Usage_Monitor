@@ -11,6 +11,7 @@
  */
 
 const fs = require('fs/promises');
+const fsSync = require('fs');
 const path = require('path');
 const os = require('os');
 const { spawn, spawnSync } = require('child_process');
@@ -137,9 +138,11 @@ async function refreshSlotToken(slotId, options = {}) {
       windowsHide: true,
     });
 
-    if (runResult.status !== 0) {
-      const stderr = runResult.stderr || runResult.stdout || '로그인되지 않았거나 갱신 실패';
-      throw new Error(`슬롯 ${normalizedId} 토큰 갱신 실패 (exit code: ${runResult.status}): ${stderr}`);
+    if (runResult.status !== 0 || runResult.error) {
+      const errorMsg = runResult.error?.message || '';
+      const stderr = runResult.stderr || runResult.stdout || errorMsg || '로그인되지 않았거나 갱신 실패';
+      const details = [stderr, errorMsg && stderr !== errorMsg ? `(${errorMsg})` : null].filter(Boolean).join(' ');
+      throw new Error(`슬롯 ${normalizedId} 토큰 갱신 실패 (exit code: ${runResult.status}): ${details}`);
     }
   }
 
@@ -291,63 +294,66 @@ function startOAuthLoginFlow(slotId, options = {}) {
   const normalizedId = normalizeSlotId(slotId);
   const slotDir = getSlotCodexHome(normalizedId, options);
 
-  let child;
-  const promise = (async () => {
-    await fs.mkdir(slotDir, { recursive: true });
+  // 슬롯 디렉터리를 동기적으로 생성하여 자식 프로세스가 즉시 생성되도록 보장
+  fsSync.mkdirSync(slotDir, { recursive: true });
 
-    const spawnFn = options.spawnFn || spawn;
+  const spawnFn = options.spawnFn || spawn;
+  const child = spawnFn('codex', ['login'], {
+    env: {
+      ...process.env,
+      CODEX_HOME: slotDir,
+    },
+    shell: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
 
-    return new Promise((resolve, reject) => {
-      child = spawnFn('codex', ['login'], {
-        env: {
-          ...process.env,
-          CODEX_HOME: slotDir,
-        },
-        shell: true,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-
-      child.on('error', (err) => {
-        reject(new Error(`Codex 로그인 프로세스 시작 실패: ${err.message}`));
-      });
-
-      child.on('close', async (code) => {
-        if (code !== 0) {
-          return reject(new Error(`Codex 로그인이 비정상 종료되었습니다 (종료 코드: ${code})`));
-        }
-
-        try {
-          const authFilePath = path.join(slotDir, 'auth.json');
-          const raw = await fs.readFile(authFilePath, 'utf8');
-          const authData = JSON.parse(raw);
-
-          if (!authData.tokens || !authData.tokens.access_token) {
-            return reject(new Error('로그인 완료 후 생성된 auth.json에 유효한 토큰이 없습니다.'));
-          }
-
-          const email = extractEmailFromTokens(authData.tokens);
-
-          const slotData = await saveSlot(normalizedId, {
-            tokens: authData.tokens,
-            email: email || null,
-            auth_mode: authData.auth_mode || 'chatgpt',
-            status: 'active',
-            source: 'codex_login',
-            last_refresh: new Date().toISOString(),
-          }, options);
-
-          resolve({
-            success: true,
-            slot: slotData,
-          });
-        } catch (err) {
-          reject(new Error(`로그인 완료 후 인증 정보 로드 실패: ${err.message}`));
-        }
-      });
+  const promise = new Promise((resolve, reject) => {
+    child.on('error', (err) => {
+      reject(new Error(`Codex 로그인 프로세스 시작 실패: ${err.message}`));
     });
-  })();
 
-  promise.childProcess = child;
+    child.on('close', async (code) => {
+      if (code !== 0) {
+        return reject(new Error(`Codex 로그인이 비정상 종료되었습니다 (종료 코드: ${code})`));
+      }
+
+      try {
+        const authFilePath = path.join(slotDir, 'auth.json');
+        const raw = await fs.readFile(authFilePath, 'utf8');
+        const authData = JSON.parse(raw);
+
+        if (!authData.tokens || !authData.tokens.access_token) {
+          return reject(new Error('로그인 완료 후 생성된 auth.json에 유효한 토큰이 없습니다.'));
+        }
+
+        const email = extractEmailFromTokens(authData.tokens);
+
+        const slotData = await saveSlot(normalizedId, {
+          tokens: authData.tokens,
+          email: email || null,
+          auth_mode: authData.auth_mode || 'chatgpt',
+          status: 'active',
+          source: 'codex_login',
+          last_refresh: new Date().toISOString(),
+        }, options);
+
+        resolve({
+          success: true,
+          slot: slotData,
+        });
+      } catch (err) {
+        reject(new Error(`로그인 완료 후 인증 정보 로드 실패: ${err.message}`));
+      }
+    });
+  });
+
+  // 호출자가 비동기 완료 전에도 childProcess를 즉시 참조/제어할 수 있도록 getter 정의
+  Object.defineProperty(promise, 'childProcess', {
+    get: () => child,
+    configurable: true,
+    enumerable: true,
+  });
+
   return promise;
 }
 

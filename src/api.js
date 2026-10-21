@@ -207,12 +207,17 @@ async function fetchUsage(slotId, options = {}) {
   const rawData = await response.json();
   const parsed = parseUsageResponse(rawData);
 
+  // WHAM API 응답에 email이 누락된 경우 tokenInfo.email을 폴백으로 채워 반환값과 저장소 일관성 유지
+  if (!parsed.email && tokenInfo.email) {
+    parsed.email = tokenInfo.email;
+  }
+
   // 6. 슬롯 저장소 영속화 (옵션)
   if (options.save !== false) {
     await saveSlot(normalizedId, {
       usage: parsed,
       plan: parsed.planType,
-      email: parsed.email || tokenInfo.email,
+      email: parsed.email,
     }, options);
   }
 

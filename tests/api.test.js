@@ -370,6 +370,37 @@ describe('auth.js - 토큰 수명 주기 및 OAuth 격리 관리자', () => {
       assert.equal(savedSlot.email, 'newslot2@example.com');
       assert.equal(savedSlot.tokens.access_token, newToken);
     });
+
+    it('startOAuthLoginFlow 호출 즉시 loginPromise.childProcess가 정의되어 프로세스 제어가 가능해야 한다', async () => {
+      let killCalled = false;
+      const mockSpawn = (cmd, args, options) => {
+        const emitter = new EventEmitter();
+        emitter.pid = 12345;
+        emitter.kill = () => {
+          killCalled = true;
+          emitter.emit('close', 1);
+        };
+        return emitter;
+      };
+
+      const loginPromise = startOAuthLoginFlow('slot2', {
+        configDir: tempDir,
+        spawnFn: mockSpawn,
+      });
+
+      // 동기 반환 즉시 childProcess가 존재해야 함
+      assert.ok(loginPromise.childProcess, 'childProcess가 동기적으로 정의되어야 함');
+      assert.equal(loginPromise.childProcess.pid, 12345);
+
+      // 프로세스 kill 제어 가능 확인
+      loginPromise.childProcess.kill();
+      assert.equal(killCalled, true);
+
+      // 프로세스가 비정상 종료(코드 1)되었으므로 reject 검증
+      await assert.rejects(async () => {
+        await loginPromise;
+      }, /Codex 로그인이 비정상 종료되었습니다/);
+    });
   });
 });
 
@@ -439,6 +470,42 @@ describe('fetchUsage - API 통신 및 에러 복구', () => {
     assert.ok(slotData.usage);
     assert.equal(slotData.usage.primaryWindow.usedPercent, 40);
     assert.equal(slotData.plan, 'plus');
+  });
+
+  it('WHAM API 응답에 email 필드가 없는 경우 tokenInfo.email을 폴백으로 채워야 한다', async () => {
+    const validToken = createFakeJwt({ exp: Math.floor(Date.now() / 1000) + 3600, email: 'fallback-user@test.com' });
+    const slot1Home = getSlotCodexHome('slot1', { configDir: tempDir });
+    await fs.mkdir(slot1Home, { recursive: true });
+    await fs.writeFile(
+      path.join(slot1Home, 'auth.json'),
+      JSON.stringify({
+        tokens: {
+          access_token: validToken,
+          account_id: 'acc-fallback',
+        },
+      })
+    );
+
+    const mockFetch = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        plan_type: 'plus',
+        // email 필드 의도적 누락
+        rate_limit: {
+          primary_window: { used_percent: 20, limit_window_seconds: 18000, reset_after_seconds: 1800 },
+        },
+      }),
+    });
+
+    const usage = await fetchUsage('slot1', {
+      configDir: tempDir,
+      fetchFn: mockFetch,
+    });
+
+    assert.equal(usage.email, 'fallback-user@test.com');
+    const slotData = await getSlot('slot1', { configDir: tempDir });
+    assert.equal(slotData.email, 'fallback-user@test.com');
   });
 
   it('401 Unauthorized 발생 시 토큰을 강제 갱신한 후 재시도하여 성공해야 한다', async () => {
