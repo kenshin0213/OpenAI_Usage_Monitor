@@ -14,16 +14,19 @@
  */
 
 const path = require('path');
+const fs = require('fs');
 const os = require('os');
 const electron = require('electron');
 
 const configModule = require('./config.js');
 const authModule = require('./auth.js');
 const pollerModule = require('./poller.js');
+const notifierModule = require('./notifier.js');
 
 const { getConfig, updateConfig, seedSlot1FromCodex, normalizeSlotId } = configModule;
 const { startOAuthLoginFlow } = authModule;
 const { startPolling, pollAllSlots, getLatestPollResult } = pollerModule;
+const { sendNotification } = notifierModule;
 
 // ============================================================================
 // 순수 유틸리티 함수 (테스트 가능)
@@ -398,14 +401,25 @@ async function updateTrayMenu() {
   });
 
   const menu = electron.Menu.buildFromTemplate(template);
-  tray.setContextMenu(menu);
+  // macOS에서는 네이티브 메뉴 연동을 위해 setContextMenu를 사용하고,
+  // Windows에서는 좌클릭 시 창 토글과 우클릭 컨텍스트 메뉴를 확실히 분리하기 위해 popUpContextMenu 사용
+  if (process.platform === 'darwin') {
+    tray.setContextMenu(menu);
+  }
+  return menu;
 }
 
 /**
  * 시스템 트레이 아이콘을 생성하고 이벤트를 바인딩합니다.
  */
 function createTray() {
-  const iconPath = path.join(__dirname, '..', 'assets', 'icon.png');
+  const iconIcoPath = path.join(__dirname, '..', 'assets', 'icon.ico');
+  const iconPngPath = path.join(__dirname, '..', 'assets', 'icon.png');
+  // Windows 환경에서는 16~64px 멀티 해상도 icon.ico 우선 사용
+  const iconPath = (process.platform === 'win32' && fs.existsSync(iconIcoPath))
+    ? iconIcoPath
+    : iconPngPath;
+
   let icon = iconPath;
   if (electron.nativeImage && typeof electron.nativeImage.createFromPath === 'function') {
     icon = electron.nativeImage.createFromPath(iconPath);
@@ -419,13 +433,12 @@ function createTray() {
     toggleWindow();
   });
 
-  // 우클릭: 컨텍스트 메뉴 표시
-  tray.on('right-click', () => {
-    updateTrayMenu().then(() => {
-      if (tray && typeof tray.popUpContextMenu === 'function') {
-        // 일부 플랫폼 호환용
-      }
-    });
+  // 우클릭: 컨텍스트 메뉴 팝업
+  tray.on('right-click', async () => {
+    const menu = await updateTrayMenu();
+    if (menu && tray && typeof tray.popUpContextMenu === 'function') {
+      tray.popUpContextMenu(menu);
+    }
   });
 
   updateTrayMenu();
@@ -528,6 +541,9 @@ async function initApp() {
       broadcastUsage(data);
     });
   }
+
+  // 6. 시작 즉시 팝업 창을 화면에 표시하여 사용자에게 시각적 피드백 제공
+  showWindow();
 }
 
 // ============================================================================

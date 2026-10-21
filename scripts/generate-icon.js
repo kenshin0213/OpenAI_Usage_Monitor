@@ -165,20 +165,69 @@ function generateMonitorIcon(size = 64) {
   return createPng(size, size, buf);
 }
 
+/**
+ * 복수의 PNG 버퍼를 하나의 Windows .ico 포맷 버퍼로 패키징합니다.
+ * @param {Array<{ width: number, height: number, buffer: Buffer }>} pngEntries 
+ * @returns {Buffer}
+ */
+function createIco(pngEntries) {
+  const count = pngEntries.length;
+  const header = Buffer.alloc(6);
+  header.writeUInt16LE(0, 0); // reserved
+  header.writeUInt16LE(1, 2); // ICO type (1 = icon)
+  header.writeUInt16LE(count, 4); // number of images
+
+  const entries = [];
+  let offset = 6 + count * 16;
+
+  for (const img of pngEntries) {
+    const entry = Buffer.alloc(16);
+    entry.writeUInt8(img.width >= 256 ? 0 : img.width, 0);
+    entry.writeUInt8(img.height >= 256 ? 0 : img.height, 1);
+    entry.writeUInt8(0, 2); // palette
+    entry.writeUInt8(0, 3); // reserved
+    entry.writeUInt16LE(1, 4); // color planes
+    entry.writeUInt16LE(32, 6); // bits per pixel
+    entry.writeUInt32LE(img.buffer.length, 8); // size
+    entry.writeUInt32LE(offset, 12); // offset
+    entries.push(entry);
+    offset += img.buffer.length;
+  }
+
+  return Buffer.concat([header, ...entries, ...pngEntries.map(e => e.buffer)]);
+}
+
 // assets 디렉터리 생성 및 파일 저장
 const assetsDir = path.resolve(__dirname, '..', 'assets');
 if (!fs.existsSync(assetsDir)) {
   fs.mkdirSync(assetsDir, { recursive: true });
 }
 
+// 1. icon.png (64x64) 저장
 const iconPngPath = path.join(assetsDir, 'icon.png');
 const pngData = generateMonitorIcon(64);
 fs.writeFileSync(iconPngPath, pngData);
 console.log(`Successfully generated: ${iconPngPath} (${pngData.length} bytes)`);
 
+// 2. icon.ico (16, 24, 32, 64px 멀티 해상도) 저장
+const iconIcoPath = path.join(assetsDir, 'icon.ico');
+const p16 = generateMonitorIcon(16);
+const p24 = generateMonitorIcon(24);
+const p32 = generateMonitorIcon(32);
+const p64 = generateMonitorIcon(64);
+const icoData = createIco([
+  { width: 16, height: 16, buffer: p16 },
+  { width: 24, height: 24, buffer: p24 },
+  { width: 32, height: 32, buffer: p32 },
+  { width: 64, height: 64, buffer: p64 },
+]);
+fs.writeFileSync(iconIcoPath, icoData);
+console.log(`Successfully generated: ${iconIcoPath} (${icoData.length} bytes)`);
+
 module.exports = {
   crc32,
   makeChunk,
   createPng,
+  createIco,
   generateMonitorIcon,
 };
