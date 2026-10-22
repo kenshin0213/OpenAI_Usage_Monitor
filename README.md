@@ -81,7 +81,7 @@
 ### 설치
 ```powershell
 # 저장소 복제
-git clone https://github.com/YOUR_USERNAME/OpenAI_Usage_Monitor.git
+git clone https://github.com/kenshin0213/OpenAI_Usage_Monitor.git
 cd OpenAI_Usage_Monitor
 
 # 의존성 패키지 설치
