@@ -4,7 +4,7 @@
  * 계정 슬롯 저장소 및 애플리케이션 설정 모듈 단위 테스트
  */
 
-const { describe, it, beforeEach, afterEach } = require('node:test');
+const { describe, it, test, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs/promises');
 const path = require('path');
@@ -21,6 +21,10 @@ const {
   resetConfigDir,
   normalizeSlotId,
   DEFAULT_CONFIG,
+  getSlots,
+  addSlot,
+  removeSlot,
+  logoutSlot,
 } = require('../src/config');
 
 describe('config.js - 계정 슬롯 및 설정 관리자', () => {
@@ -54,9 +58,18 @@ describe('config.js - 계정 슬롯 및 설정 관리자', () => {
       assert.strictEqual(normalizeSlotId('SLOT2'), 'slot2');
     });
 
+    it('3, "3", "slot3" 등 임의의 N번 슬롯도 "slotN"으로 정상 정규화해야 한다', () => {
+      assert.strictEqual(normalizeSlotId(3), 'slot3');
+      assert.strictEqual(normalizeSlotId('3'), 'slot3');
+      assert.strictEqual(normalizeSlotId('slot3'), 'slot3');
+      assert.strictEqual(normalizeSlotId('SLOT3'), 'slot3');
+    });
+
     it('지원되지 않는 슬롯 ID는 예외를 발생시켜야 한다', () => {
-      assert.throws(() => normalizeSlotId('slot3'), /유효하지 않은 슬롯 ID/);
+      assert.throws(() => normalizeSlotId('slot0'), /유효하지 않은 슬롯 ID/);
+      assert.throws(() => normalizeSlotId('invalid'), /유효하지 않은 슬롯 ID/);
       assert.throws(() => normalizeSlotId(0), /유효하지 않은 슬롯 ID/);
+      assert.throws(() => normalizeSlotId(-1), /유효하지 않은 슬롯 ID/);
       assert.throws(() => normalizeSlotId(null), /유효하지 않은 슬롯 ID/);
     });
   });
@@ -290,6 +303,78 @@ describe('config.js - 계정 슬롯 및 설정 관리자', () => {
       assert.strictEqual(result.success, true);
       const slot1 = await getSlot('slot1');
       assert.strictEqual(slot1.tokens.access_token, 'new_token');
+    });
+  });
+
+  describe('동적 슬롯 관리 및 로그아웃, 테마 설정', () => {
+    test('getSlots returns default [slot1, slot2] if slots not set', async () => {
+      const slots = await getSlots();
+      assert.deepStrictEqual(slots, ['slot1', 'slot2']);
+    });
+
+    test('addSlot appends a new slot and initializes empty slot file', async () => {
+      const result = await addSlot();
+      assert.strictEqual(result.slotId, 'slot3');
+      assert.deepStrictEqual(result.slots, ['slot1', 'slot2', 'slot3']);
+      const slot3Data = await getSlot('slot3');
+      assert.strictEqual(slot3Data.linked, false);
+    });
+
+    test('removeSlot deletes specified slot when > 2 slots exist', async () => {
+      await addSlot(); // slot3
+      const res = await removeSlot('slot3');
+      assert.strictEqual(res.success, true);
+      const slots = await getSlots();
+      assert.strictEqual(slots.includes('slot3'), false);
+    });
+
+    test('removeSlot fails when trying to delete when <= 2 slots exist', async () => {
+      await assert.rejects(
+        async () => removeSlot('slot1'),
+        /최소 2개 이상 유지되어야 합니다/
+      );
+    });
+
+    test('removeSlot fails when trying to delete non-existent slot', async () => {
+      await addSlot(); // slot3
+      await assert.rejects(
+        async () => removeSlot('slot99'),
+        /존재하지 않는 슬롯입니다/
+      );
+    });
+
+    test('logoutSlot clears tokens and resets slot to unlinked', async () => {
+      await saveSlot('slot1', { email: 'test@example.com', tokens: { access_token: 'abc' } });
+      const result = await logoutSlot('slot1');
+      assert.strictEqual(result.success, true);
+      const slot = await getSlot('slot1');
+      assert.strictEqual(slot.linked, false);
+      assert.strictEqual(slot.email, null);
+      assert.strictEqual(slot.tokens, null);
+    });
+
+    test('logoutSlot removes auth.json from profiles directory', async () => {
+      const { getSlotCodexHome } = require('../src/auth');
+      const slotHome = getSlotCodexHome('slot1', { configDir: tempDir });
+      await fs.mkdir(slotHome, { recursive: true });
+      const authPath = path.join(slotHome, 'auth.json');
+      await fs.writeFile(authPath, JSON.stringify({ tokens: { access_token: '123' } }));
+
+      await saveSlot('slot1', { email: 'test@example.com' });
+      await logoutSlot('slot1');
+
+      let exists = true;
+      try {
+        await fs.access(authPath);
+      } catch {
+        exists = false;
+      }
+      assert.strictEqual(exists, false);
+    });
+
+    test('updateConfig saves theme: "light" properly', async () => {
+      const cfg = await updateConfig({ theme: 'light' });
+      assert.strictEqual(cfg.theme, 'light');
     });
   });
 });

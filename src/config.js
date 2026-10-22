@@ -23,6 +23,8 @@ const DEFAULT_CONFIG = Object.freeze({
   notifyOnThreshold: true,       // 임계치 도달 시 Windows 알림 발송 여부
   notifyOnReset: true,           // 한도 100% 리셋 시 Windows 알림 발송 여부
   startOnBoot: false,            // 윈도우 부팅 시 자동 시작 여부
+  theme: 'dark',                 // UI 테마 ('dark' | 'light')
+  slots: Object.freeze(['slot1', 'slot2']), // 활성화된 계정 슬롯 목록
 });
 
 /**
@@ -73,20 +75,26 @@ function getConfigDir() {
 }
 
 /**
- * 슬롯 식별자('slot1', 'slot2')를 검증하고 표준 형식으로 정규화합니다.
+ * 슬롯 식별자('slot1', 'slot2', ..., 'slotN')를 검증하고 표준 형식으로 정규화합니다.
  * @param {string|number} slotId 
- * @returns {'slot1' | 'slot2'}
+ * @returns {string} 정규화된 슬롯 ID (예: 'slot1', 'slot2', 'slot3')
  */
 function normalizeSlotId(slotId) {
   if (typeof slotId === 'string') {
-    const lower = slotId.trim().toLowerCase();
-    if (lower === 'slot1' || lower === '1') return 'slot1';
-    if (lower === 'slot2' || lower === '2') return 'slot2';
-  } else if (typeof slotId === 'number') {
-    if (slotId === 1) return 'slot1';
-    if (slotId === 2) return 'slot2';
+    const trimmed = slotId.trim().toLowerCase();
+    const match = trimmed.match(/^slot(\d+)$/);
+    if (match) {
+      const num = parseInt(match[1], 10);
+      if (num > 0) return `slot${num}`;
+    }
+    const numOnly = parseInt(trimmed, 10);
+    if (!isNaN(numOnly) && String(numOnly) === trimmed && numOnly > 0) {
+      return `slot${numOnly}`;
+    }
+  } else if (typeof slotId === 'number' && Number.isInteger(slotId) && slotId > 0) {
+    return `slot${slotId}`;
   }
-  throw new Error(`유효하지 않은 슬롯 ID입니다: ${slotId} ('slot1' 또는 'slot2'만 지원됩니다)`);
+  throw new Error(`유효하지 않은 슬롯 ID입니다: ${slotId}`);
 }
 
 /**
@@ -146,12 +154,16 @@ async function getConfig(options = {}) {
   const fileData = await safeReadJson(filePath);
 
   if (!fileData) {
-    return { ...DEFAULT_CONFIG };
+    return {
+      ...DEFAULT_CONFIG,
+      slots: [...DEFAULT_CONFIG.slots],
+    };
   }
 
   return {
     ...DEFAULT_CONFIG,
     ...fileData,
+    slots: Array.isArray(fileData.slots) ? [...fileData.slots] : [...DEFAULT_CONFIG.slots],
   };
 }
 
@@ -181,8 +193,133 @@ async function updateConfig(patch, options = {}) {
 }
 
 /**
+ * 현재 활성화된 슬롯 식별자 목록을 반환합니다.
+ * @param {object} [options]
+ * @param {string} [options.configDir]
+ * @returns {Promise<string[]>}
+ */
+async function getSlots(options = {}) {
+  const config = await getConfig(options);
+  if (Array.isArray(config.slots) && config.slots.length > 0) {
+    return [...config.slots];
+  }
+  return ['slot1', 'slot2'];
+}
+
+/**
+ * 신규 계정 슬롯을 추가하고 빈 슬롯 파일을 초기화합니다.
+ * @param {object} [options]
+ * @param {string} [options.configDir]
+ * @returns {Promise<{ slotId: string, slots: string[] }>}
+ */
+async function addSlot(options = {}) {
+  const currentSlots = await getSlots(options);
+
+  // 기존 슬롯 번호 중 최댓값을 찾아 다음 슬롯 번호 산출
+  let maxNum = 0;
+  for (const s of currentSlots) {
+    const m = String(s).match(/^slot(\d+)$/i);
+    if (m) {
+      const num = parseInt(m[1], 10);
+      if (num > maxNum) maxNum = num;
+    }
+  }
+  const nextNum = maxNum > 0 ? maxNum + 1 : currentSlots.length + 1;
+  const newSlotId = `slot${nextNum}`;
+  const nextSlots = [...currentSlots, newSlotId];
+
+  // 환경설정에 신규 슬롯 목록 반영
+  await updateConfig({ slots: nextSlots }, options);
+
+  // 신규 슬롯 데이터 초기화 (linked: false)
+  await saveSlot(newSlotId, {
+    linked: false,
+    tokens: null,
+    email: null,
+    usage: null,
+    plan: null,
+  }, { ...options, overwrite: true });
+
+  return { slotId: newSlotId, slots: nextSlots };
+}
+
+/**
+ * 지정된 슬롯을 제거합니다. 최소 2개의 슬롯이 유지되어야 합니다.
+ * 슬롯 데이터 파일과 프로필 폴더도 함께 정리합니다.
+ * @param {string|number} slotId 
+ * @param {object} [options]
+ * @param {string} [options.configDir]
+ * @returns {Promise<{ success: boolean, slots: string[] }>}
+ */
+async function removeSlot(slotId, options = {}) {
+  const normalizedId = normalizeSlotId(slotId);
+  const currentSlots = await getSlots(options);
+
+  if (currentSlots.length <= 2) {
+    throw new Error('슬롯은 최소 2개 이상 유지되어야 합니다.');
+  }
+
+  if (!currentSlots.includes(normalizedId)) {
+    throw new Error(`존재하지 않는 슬롯입니다: ${normalizedId}`);
+  }
+
+  const nextSlots = currentSlots.filter((id) => id !== normalizedId);
+  await updateConfig({ slots: nextSlots }, options);
+
+  // 슬롯 JSON 파일 삭제
+  await clearSlot(normalizedId, options);
+
+  // 프로필 폴더 삭제
+  const dir = options.configDir || getConfigDir();
+  const profileDir = path.join(dir, 'profiles', normalizedId);
+  try {
+    await fs.rm(profileDir, { recursive: true, force: true });
+  } catch {
+    // 디렉터리 부재 무시
+  }
+
+  return { success: true, slots: nextSlots };
+}
+
+/**
+ * 지정된 슬롯을 로그아웃 처리합니다.
+ * 토큰, 이메일, 사용량을 초기화하고 linked: false로 설정하며,
+ * 프로필 폴더 내 auth.json 파일을 삭제합니다.
+ * @param {string|number} slotId 
+ * @param {object} [options]
+ * @param {string} [options.configDir]
+ * @returns {Promise<{ success: boolean }>}
+ */
+async function logoutSlot(slotId, options = {}) {
+  const normalizedId = normalizeSlotId(slotId);
+
+  // 프로필 폴더 내 auth.json 삭제 (auth 모듈 위임)
+  try {
+    const auth = require('./auth');
+    if (typeof auth.logoutSlot === 'function') {
+      await auth.logoutSlot(normalizedId, options);
+    }
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      throw err;
+    }
+  }
+
+  // 슬롯 파일 데이터 초기화
+  await saveSlot(normalizedId, {
+    linked: false,
+    tokens: null,
+    email: null,
+    usage: null,
+    plan: null,
+  }, options);
+
+  return { success: true };
+}
+
+/**
  * 지정된 슬롯 파일 경로를 반환합니다.
- * @param {'slot1' | 'slot2'} normalizedSlotId 
+ * @param {string} normalizedSlotId 
  * @param {string} dir 
  * @returns {string}
  */
@@ -394,4 +531,8 @@ module.exports = {
   seedSlot1FromCodex,
   extractEmailFromJwt,
   extractEmailFromTokens,
+  getSlots,
+  addSlot,
+  removeSlot,
+  logoutSlot,
 };

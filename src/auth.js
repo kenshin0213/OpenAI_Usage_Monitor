@@ -245,7 +245,8 @@ async function ensureValidToken(slotId, options = {}) {
     if (normalizedId === 'slot1') {
       throw new Error('슬롯 1의 인증 정보를 찾을 수 없습니다. (Codex 로그인이 필요합니다)');
     } else {
-      throw new Error('슬롯 2가 연동되지 않았습니다. ([계정 2 연동하기]를 통해 로그인해 주세요)');
+      const slotNum = normalizedId.replace('slot', '');
+      throw new Error(`슬롯 ${slotNum}가 연동되지 않았습니다. ([계정 ${slotNum} 연동하기]를 통해 로그인해 주세요)`);
     }
   }
 
@@ -357,6 +358,29 @@ function startOAuthLoginFlow(slotId, options = {}) {
   return promise;
 }
 
+/**
+ * 지정된 슬롯의 격리된 인증 파일(profiles/<slotId>/auth.json)을 삭제하여 세션을 로그아웃 처리합니다.
+ * @param {string|number} slotId 
+ * @param {object} [options]
+ * @param {string} [options.configDir]
+ * @returns {Promise<{ success: boolean }>}
+ */
+async function logoutSlot(slotId, options = {}) {
+  const normalizedId = normalizeSlotId(slotId);
+  const slotDir = getSlotCodexHome(normalizedId, options);
+  const authFilePath = path.join(slotDir, 'auth.json');
+
+  try {
+    await fs.unlink(authFilePath);
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      throw err;
+    }
+  }
+
+  return { success: true };
+}
+
 module.exports = {
   getSlotCodexHome,
   isTokenExpired,
@@ -364,4 +388,5 @@ module.exports = {
   refreshSlotToken,
   ensureValidToken,
   startOAuthLoginFlow,
+  logoutSlot,
 };
