@@ -1,15 +1,16 @@
 /**
  * src/ui/renderer.js
  * 
- * ChatGPT 듀얼 사용량 모니터 - 트레이 팝업 렌더러 로직
+ * ChatGPT 다중 사용량 모니터 - 트레이 팝업 렌더러 로직
  * 
  * 주요 기능:
- * 1. 실시간 사용량 메트릭(5시간 단위, 주간 한도) DOM 바인딩 및 시각화
+ * 1. 실시간 사용량 메트릭(5시간 단위, 주간 한도) 동적 카드 목록 DOM 렌더링
  * 2. 부드러운 프로그레스 바 및 잔여량 임계치 컬러 큐 (초록 >30%, 노랑 11~30%, 빨강 <=10%)
- * 3. 1초 주기 실시간 카운트다운 타이머 (resetAt 타임스탬프 기반 자동 계산)
- * 4. 계정 2 동적 상태 전환 (미연동, 로그인 진행 중, 연동 완료)
- * 5. 환경설정 모달 제어 (갱신 주기, 임계치 슬라이더, 토스트 알림 ON/OFF)
- * 6. Electron IPC 통신 및 브라우저 독립 모의(Mock) 실행 지원
+ * 3. 1초 주기 실시간 카운트다운 타이머 (resetAt 타임스탬프 기반 모든 슬롯 동적 갱신)
+ * 4. 동적 N개 계정 카드 생성 (미연동, 로그인 진행 중, 연동 완료) 및 슬롯 추가/삭제
+ * 5. 창 항상 위 고정(📌 핀 모드) 및 다크/라이트 테마 전환
+ * 6. 계정별 로그아웃 및 재연동 트리거
+ * 7. 환경설정 모달 제어 및 외부 Electron IPC 통신 / 브라우저 모의 실행 지원
  */
 
 // ============================================================================
@@ -109,6 +110,180 @@ function formatLastUpdated(timestamp) {
 }
 
 /**
+ * 현재 테마를 기반으로 다음 테마 문자열을 반환합니다.
+ * @param {string} currentTheme 
+ * @returns {'dark' | 'light'}
+ */
+function getNextTheme(currentTheme) {
+  return currentTheme === 'light' ? 'dark' : 'light';
+}
+
+/**
+ * HTML 특수문자 이스케이프 유틸리티
+ * @param {string} str 
+ * @returns {string}
+ */
+function escapeHtml(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+/**
+ * 슬롯 ID에 따른 배지 스타일 클래스를 반환합니다.
+ * @param {string} slotId 
+ * @returns {string}
+ */
+function getSlotBadgeClass(slotId) {
+  if (slotId === 'slot1') return 'slot1-badge';
+  if (slotId === 'slot2') return 'slot2-badge';
+  if (slotId === 'slot3') return 'slot3-badge';
+  return 'slot-badge-generic';
+}
+
+/**
+ * 임의 개수의 슬롯 데이터를 바탕으로 카드 HTML 목록을 생성합니다.
+ * @param {Record<string, object>} slotsData 슬롯별 상태/사용량 객체
+ * @param {object} [state] UI 부가 상태 (loggingSlots 등)
+ * @returns {string} 카드 HTML 문자열
+ */
+function generateSlotsHtml(slotsData = {}, state = {}) {
+  const slotKeys = Object.keys(slotsData || {}).sort((a, b) => {
+    const numA = parseInt((a.match(/\d+/) || [0])[0], 10);
+    const numB = parseInt((b.match(/\d+/) || [0])[0], 10);
+    return numA - numB;
+  });
+
+  const totalSlots = slotKeys.length;
+
+  return slotKeys.map((slotId) => {
+    const slot = slotsData[slotId] || {};
+    const slotNum = (slotId.match(/\d+/) || [slotId])[0];
+    const slotLabel = `계정 ${slotNum}`;
+    const badgeClass = getSlotBadgeClass(slotId);
+    const isLoggingIn = Boolean(state?.loggingSlots?.[slotId]);
+    const isLinked = Boolean(slot.linked);
+    const isExtraSlot = totalSlots > 2 || parseInt(slotNum, 10) > 2;
+
+    // 1. 로그인 진행 중 상태 카드
+    if (isLoggingIn) {
+      return `
+      <section id="${slotId}-card" class="account-card" data-slot="${slotId}">
+        <div class="card-header">
+          <div class="account-info">
+            <span class="slot-badge ${badgeClass}">${slotLabel}</span>
+            <span class="account-email text-warning">연동 진행 중...</span>
+          </div>
+        </div>
+        <div class="logging-content">
+          <div class="spinner" aria-label="로그인 진행 중"></div>
+          <p class="logging-title">브라우저에서 로그인 대기 중...</p>
+          <p class="logging-desc">웹 브라우저에서 OpenAI 로그인을 완료하면 자동으로 연결됩니다.</p>
+          <button class="btn btn-secondary btn-cancel btn-cancel-login" data-slot="${slotId}">
+            연동 취소
+          </button>
+        </div>
+      </section>`;
+    }
+
+    // 2. 연동 완료 상태 카드
+    if (isLinked) {
+      const planInfo = getPlanBadgeInfo(slot.planType);
+      const email = slot.email || '인증 완료 (이메일 미확인)';
+      const metrics = slot.metrics || slot;
+      const primary = metrics.primaryWindow || {};
+      const secondary = metrics.secondaryWindow || {};
+
+      const pRemaining = typeof primary.remainingPercent === 'number' ? primary.remainingPercent : 0;
+      const pColor = getProgressColorClass(pRemaining);
+      const pCountdown = primary.formattedResetText || formatCountdown(primary.resetAfterSeconds || 0);
+
+      const sRemaining = typeof secondary.remainingPercent === 'number' ? secondary.remainingPercent : 0;
+      const sColor = getProgressColorClass(sRemaining);
+      const sCountdown = secondary.formattedResetText || formatCountdown(secondary.resetAfterSeconds || 0);
+
+      return `
+      <section id="${slotId}-card" class="account-card" data-slot="${slotId}">
+        <div class="card-header">
+          <div class="account-info">
+            <span class="slot-badge ${badgeClass}">${slotLabel}</span>
+            <span id="${slotId}-email" class="account-email" title="${escapeHtml(email)}">${escapeHtml(email)}</span>
+          </div>
+          <div class="card-header-actions">
+            <span id="${slotId}-plan" class="plan-badge ${planInfo.badgeClass}">${planInfo.label}</span>
+            <button class="btn-card-action btn-logout" data-slot="${slotId}" title="계정 로그아웃" aria-label="로그아웃">로그아웃</button>
+          </div>
+        </div>
+
+        <div class="card-body">
+          <!-- 5시간 단위 한도 (Primary Window) -->
+          <div class="metric-block" id="${slotId}-primary-block">
+            <div class="metric-header">
+              <span class="metric-title">5시간 한도</span>
+              <span id="${slotId}-primary-percent" class="metric-percent">${pRemaining}%</span>
+            </div>
+            <div class="progress-track" role="progressbar" aria-valuenow="${pRemaining}" aria-valuemin="0" aria-valuemax="100">
+              <div id="${slotId}-primary-bar" class="progress-fill ${pColor}" style="width: ${pRemaining}%;"></div>
+            </div>
+            <div class="metric-footer">
+              <span class="metric-subtext">잔여량</span>
+              <span id="${slotId}-primary-countdown" class="countdown-text">${pCountdown}</span>
+            </div>
+          </div>
+
+          <!-- 주간 사용 한도 (Secondary Window) -->
+          <div class="metric-block" id="${slotId}-secondary-block">
+            <div class="metric-header">
+              <span class="metric-title">주간 사용 한도</span>
+              <span id="${slotId}-secondary-percent" class="metric-percent">${sRemaining}%</span>
+            </div>
+            <div class="progress-track" role="progressbar" aria-valuenow="${sRemaining}" aria-valuemin="0" aria-valuemax="100">
+              <div id="${slotId}-secondary-bar" class="progress-fill ${sColor}" style="width: ${sRemaining}%;"></div>
+            </div>
+            <div class="metric-footer">
+              <span class="metric-subtext">잔여량</span>
+              <span id="${slotId}-secondary-countdown" class="countdown-text">${sCountdown}</span>
+            </div>
+          </div>
+        </div>
+      </section>`;
+    }
+
+    // 3. 미연동 상태 카드
+    const deleteBtnHtml = isExtraSlot
+      ? `<button class="btn-card-action btn-delete-slot" data-slot="${slotId}" title="카드 삭제" aria-label="카드 삭제">카드 삭제</button>`
+      : '';
+
+    return `
+    <section id="${slotId}-card" class="account-card" data-slot="${slotId}">
+      <div class="card-header">
+        <div class="account-info">
+          <span class="slot-badge ${badgeClass}">${slotLabel}</span>
+          <span class="account-email text-muted">미연동</span>
+        </div>
+        ${deleteBtnHtml ? `<div class="card-header-actions">${deleteBtnHtml}</div>` : ''}
+      </div>
+      <div class="unlinked-content">
+        <div class="unlinked-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+          </svg>
+        </div>
+        <p class="unlinked-desc">${slotLabel}을(를) 연동하여 실시간 사용량을 모니터링하세요.</p>
+        <button class="btn btn-primary btn-link-account btn-login-slot" data-slot="${slotId}">
+          + ${slotLabel} 연동하기
+        </button>
+      </div>
+    </section>`;
+  }).join('');
+}
+
+/**
  * 모의(Mock) 사용량 데이터 생성기 (브라우저 자립 실행 및 테스트용)
  * @returns {object}
  */
@@ -165,6 +340,8 @@ function createMockConfig() {
     notifyOnThreshold: true,
     notifyOnReset: true,
     startOnBoot: false,
+    theme: 'dark',
+    slots: ['slot1', 'slot2'],
   };
 }
 
@@ -180,7 +357,9 @@ class MonitorRenderer {
     // 상태 변수
     this.currentData = null;
     this.currentConfig = null;
-    this.isLoggingInSlot2 = false;
+    this.currentTheme = 'dark';
+    this.isPinned = false;
+    this.loggingSlots = {};
     this.countdownTimer = null;
     this.toastTimer = null;
 
@@ -196,6 +375,7 @@ class MonitorRenderer {
   _createBrowserMockApi() {
     let mockData = createMockUsageData();
     let mockConfig = createMockConfig();
+    let isPinnedState = false;
 
     return {
       getUsage: async () => mockData,
@@ -214,37 +394,79 @@ class MonitorRenderer {
         mockConfig = { ...mockConfig, ...patch };
         return { ...mockConfig };
       },
-      startLoginSlot2: async () => {
-        await new Promise((r) => setTimeout(r, 1500));
+      setTheme: async ({ theme }) => {
+        mockConfig.theme = theme;
+        return { theme };
+      },
+      setPinMode: async ({ isPinned }) => {
+        isPinnedState = Boolean(isPinned);
+        return { isPinned: isPinnedState };
+      },
+      getPinMode: async () => ({ isPinned: isPinnedState }),
+      closeWindow: async () => ({ closed: true }),
+      loginSlot: async (slotId = 'slot2') => {
+        await new Promise((r) => setTimeout(r, 1200));
         const nowSec = Math.floor(Date.now() / 1000);
-        mockData.slot2 = {
-          slotId: 'slot2',
+        mockData[slotId] = {
+          slotId,
           success: true,
           linked: true,
-          email: 'user2.work@gmail.com',
+          email: `${slotId}.user@openai.com`,
           planType: 'plus',
           primaryWindow: {
-            usedPercent: 45,
-            remainingPercent: 55,
+            usedPercent: 40,
+            remainingPercent: 60,
             limitWindowSeconds: 18000,
-            resetAfterSeconds: 8400,
-            resetAt: nowSec + 8400,
-            formattedResetText: formatCountdown(8400),
+            resetAfterSeconds: 7200,
+            resetAt: nowSec + 7200,
+            formattedResetText: formatCountdown(7200),
           },
           secondaryWindow: {
-            usedPercent: 20,
-            remainingPercent: 80,
+            usedPercent: 25,
+            remainingPercent: 75,
             limitWindowSeconds: 604800,
-            resetAfterSeconds: 420000,
-            resetAt: nowSec + 420000,
-            formattedResetText: formatCountdown(420000),
+            resetAfterSeconds: 432000,
+            resetAt: nowSec + 432000,
+            formattedResetText: formatCountdown(432000),
           },
           updatedAt: new Date().toISOString(),
         };
         return { success: true };
       },
+      startLoginSlot2: async () => {
+        return this.api.loginSlot('slot2');
+      },
+      cancelLogin: async (slotId = 'slot2') => {
+        return { success: true, cancelled: true };
+      },
       cancelLoginSlot2: async () => {
         return { success: true, cancelled: true };
+      },
+      logoutSlot: async (slotId) => {
+        if (mockData[slotId]) {
+          mockData[slotId].linked = false;
+          mockData[slotId].email = null;
+          mockData[slotId].primaryWindow = null;
+          mockData[slotId].secondaryWindow = null;
+        }
+        return { success: true };
+      },
+      addSlot: async () => {
+        const slotKeys = Object.keys(mockData).filter((k) => k.startsWith('slot'));
+        const nextNum = slotKeys.length + 1;
+        const newSlotId = `slot${nextNum}`;
+        mockData[newSlotId] = {
+          slotId: newSlotId,
+          linked: false,
+          email: null,
+          primaryWindow: null,
+          secondaryWindow: null,
+        };
+        return { slotId: newSlotId, slots: Object.keys(mockData).filter((k) => k.startsWith('slot')) };
+      },
+      removeSlot: async (slotId) => {
+        delete mockData[slotId];
+        return { success: true, slots: Object.keys(mockData).filter((k) => k.startsWith('slot')) };
       },
       onUsageUpdated: (cb) => {
         this._mockUpdateCb = cb;
@@ -282,13 +504,20 @@ class MonitorRenderer {
   cacheDomElements() {
     const d = this.doc;
     this.el = {
-      // Header
+      // Header & Navigation
       connectionIndicator: d.getElementById('connection-indicator'),
       lastUpdatedText: d.getElementById('last-updated-text'),
-      btnRefresh: d.getElementById('btn-refresh'),
-      btnSettings: d.getElementById('btn-settings'),
+      pinBtn: d.getElementById('pinBtn'),
+      themeBtn: d.getElementById('themeBtn'),
+      btnRefresh: d.getElementById('refreshBtn') || d.getElementById('btn-refresh'),
+      btnSettings: d.getElementById('settingsBtn') || d.getElementById('btn-settings'),
+      closeBtn: d.getElementById('closeBtn'),
 
-      // Slot 1
+      // Dynamic Cards Container & Add Action
+      cardsContainer: d.getElementById('cardsContainer'),
+      addSlotBtn: d.getElementById('addSlotBtn'),
+
+      // Backward compatibility element references (for static tests)
       slot1Email: d.getElementById('slot1-email'),
       slot1Plan: d.getElementById('slot1-plan'),
       slot1PrimaryPercent: d.getElementById('slot1-primary-percent'),
@@ -298,16 +527,11 @@ class MonitorRenderer {
       slot1SecondaryBar: d.getElementById('slot1-secondary-bar'),
       slot1SecondaryCountdown: d.getElementById('slot1-secondary-countdown'),
 
-      // Slot 2 Views
       slot2UnlinkedView: d.getElementById('slot2-unlinked-view'),
       slot2LoggingView: d.getElementById('slot2-logging-view'),
       slot2LinkedView: d.getElementById('slot2-linked-view'),
-
-      // Slot 2 Actions
       btnLoginSlot2: d.getElementById('btn-login-slot2'),
       btnCancelLoginSlot2: d.getElementById('btn-cancel-login-slot2'),
-
-      // Slot 2 Linked Elements
       slot2Email: d.getElementById('slot2-email'),
       slot2Plan: d.getElementById('slot2-plan'),
       slot2PrimaryPercent: d.getElementById('slot2-primary-percent'),
@@ -343,12 +567,27 @@ class MonitorRenderer {
   bindEvents() {
     const { el } = this;
 
-    // 새로고침 버튼
+    // 1. 창 고정 핀 버튼
+    if (el.pinBtn) {
+      el.pinBtn.addEventListener('click', () => this.togglePinMode());
+    }
+
+    // 2. 테마 전환 버튼
+    if (el.themeBtn) {
+      el.themeBtn.addEventListener('click', () => this.toggleTheme());
+    }
+
+    // 3. 닫기 버튼
+    if (el.closeBtn) {
+      el.closeBtn.addEventListener('click', () => this.closeWindow());
+    }
+
+    // 4. 새로고침 버튼
     if (el.btnRefresh) {
       el.btnRefresh.addEventListener('click', () => this.handleRefresh());
     }
 
-    // 설정 모달 열기/닫기
+    // 5. 설정 모달 열기/닫기
     if (el.btnSettings) {
       el.btnSettings.addEventListener('click', () => this.openSettings());
     }
@@ -380,37 +619,207 @@ class MonitorRenderer {
       el.btnSaveSettings.addEventListener('click', () => this.saveSettings());
     }
 
-    // 계정 2 연동 버튼
-    if (el.btnLoginSlot2) {
-      el.btnLoginSlot2.addEventListener('click', () => this.handleSlot2Login());
+    // 6. 슬롯 추가 버튼
+    if (el.addSlotBtn) {
+      el.addSlotBtn.addEventListener('click', () => this.handleAddSlot());
     }
 
-    // 계정 2 연동 취소 버튼
+    // 7. 동적 카드 컨테이너 이벤트 위임 (로그아웃, 로그인, 로그인 취소, 카드 삭제)
+    if (el.cardsContainer) {
+      el.cardsContainer.addEventListener('click', (e) => {
+        const target = e.target;
+        if (!target) return;
+
+        // 로그아웃 버튼
+        const logoutBtn = target.closest('.btn-logout');
+        if (logoutBtn) {
+          const slotId = logoutBtn.dataset.slot;
+          if (slotId) this.handleLogout(slotId);
+          return;
+        }
+
+        // 로그인 버튼
+        const loginBtn = target.closest('.btn-login-slot');
+        if (loginBtn) {
+          const slotId = loginBtn.dataset.slot;
+          if (slotId) this.handleLoginSlot(slotId);
+          return;
+        }
+
+        // 로그인 취소 버튼
+        const cancelBtn = target.closest('.btn-cancel-login');
+        if (cancelBtn) {
+          const slotId = cancelBtn.dataset.slot;
+          if (slotId) this.handleCancelLoginSlot(slotId);
+          return;
+        }
+
+        // 카드 삭제 버튼
+        const deleteBtn = target.closest('.btn-delete-slot');
+        if (deleteBtn) {
+          const slotId = deleteBtn.dataset.slot;
+          if (slotId) this.handleDeleteSlot(slotId);
+          return;
+        }
+      });
+    }
+
+    // 하위 호환용 slot2 정적 버튼 리스너 바인딩
+    if (el.btnLoginSlot2) {
+      el.btnLoginSlot2.addEventListener('click', () => this.handleLoginSlot('slot2'));
+    }
     if (el.btnCancelLoginSlot2) {
-      el.btnCancelLoginSlot2.addEventListener('click', () => this.handleCancelSlot2Login());
+      el.btnCancelLoginSlot2.addEventListener('click', () => this.handleCancelLoginSlot('slot2'));
     }
   }
 
   /**
-   * 초기 데이터 로드
+   * 테마 적용
+   * @param {'dark' | 'light'} theme 
+   */
+  setTheme(theme) {
+    this.currentTheme = theme;
+    if (this.doc) {
+      if (this.doc.documentElement) {
+        this.doc.documentElement.dataset.theme = theme;
+      }
+      if (this.doc.body) {
+        this.doc.body.setAttribute('data-theme', theme);
+        this.doc.body.classList.toggle('light-theme', theme === 'light');
+        this.doc.body.classList.toggle('dark-theme', theme === 'dark');
+      }
+    }
+  }
+
+  /**
+   * 테마 토글 핸들러
+   */
+  async toggleTheme() {
+    const next = getNextTheme(this.currentTheme);
+    this.setTheme(next);
+
+    try {
+      if (this.api) {
+        if (typeof this.api.setTheme === 'function') {
+          await this.api.setTheme({ theme: next });
+        } else if (typeof this.api.saveConfig === 'function') {
+          await this.api.saveConfig({ theme: next });
+        }
+      }
+      this.showToast(next === 'light' ? '라이트 테마로 변경되었습니다.' : '다크 테마로 변경되었습니다.');
+    } catch {
+      // 비동기 에러 무시
+    }
+  }
+
+  /**
+   * 창 고정 핀 토글 핸들러
+   */
+  async togglePinMode() {
+    this.isPinned = !this.isPinned;
+    const { el } = this;
+    if (el.pinBtn) {
+      el.pinBtn.classList.toggle('active', this.isPinned);
+      el.pinBtn.title = this.isPinned ? '창 고정 해제' : '항상 위에 고정 (핀)';
+      el.pinBtn.setAttribute('aria-pressed', String(this.isPinned));
+    }
+
+    try {
+      if (this.api && typeof this.api.setPinMode === 'function') {
+        await this.api.setPinMode({ isPinned: this.isPinned });
+      }
+      this.showToast(this.isPinned ? '창 항상 위 고정이 활성화되었습니다.' : '창 고정이 해제되었습니다.');
+    } catch {
+      // 무시
+    }
+  }
+
+  /**
+   * 창 닫기 핸들러
+   */
+  async closeWindow() {
+    try {
+      if (this.api && typeof this.api.closeWindow === 'function') {
+        await this.api.closeWindow();
+      }
+    } catch {
+      // 무시
+    }
+  }
+
+  /**
+   * 초기 데이터 및 테마/핀 설정 로드
    */
   async loadInitialData() {
     try {
       this.setConnectionStatus('updating');
+
+      // 1. 설정 및 테마/핀 로드
       if (this.api) {
-        const getUsageFn = this.api.getUsage;
-        if (typeof getUsageFn === 'function') {
-          const data = await getUsageFn();
-          this.renderUsage(data);
-          return;
+        if (typeof this.api.getConfig === 'function') {
+          const cfg = await this.api.getConfig();
+          if (cfg?.theme) {
+            this.setTheme(cfg.theme);
+          }
+        }
+        if (typeof this.api.getPinMode === 'function') {
+          const pinRes = await this.api.getPinMode();
+          if (pinRes && typeof pinRes.isPinned === 'boolean') {
+            this.isPinned = pinRes.isPinned;
+            if (this.el.pinBtn) {
+              this.el.pinBtn.classList.toggle('active', this.isPinned);
+            }
+          }
         }
       }
+
+      // 2. 사용량 데이터 로드
+      if (this.api && typeof this.api.getUsage === 'function') {
+        const data = await this.api.getUsage();
+        this.renderUsage(data);
+        return;
+      }
+
       // 폴백
       this.renderUsage(createMockUsageData());
     } catch (err) {
       this.setConnectionStatus('error');
       this.showToast(err?.message || '사용량 조회 중 오류가 발생했습니다.', 'error');
     }
+  }
+
+  /**
+   * 사용량 데이터에서 슬롯 맵 추출
+   * @param {object} data 
+   * @returns {Record<string, object>}
+   */
+  extractSlots(data) {
+    if (!data || typeof data !== 'object') {
+      return {
+        slot1: { slotId: 'slot1', linked: false },
+        slot2: { slotId: 'slot2', linked: false },
+      };
+    }
+
+    if (data.slots && typeof data.slots === 'object' && !Array.isArray(data.slots)) {
+      return data.slots;
+    }
+
+    const slots = {};
+    for (const [key, value] of Object.entries(data)) {
+      if (key.startsWith('slot') && value && typeof value === 'object') {
+        slots[key] = value;
+      }
+    }
+
+    if (Object.keys(slots).length === 0) {
+      return {
+        slot1: data.slot1 || { slotId: 'slot1', linked: false },
+        slot2: data.slot2 || { slotId: 'slot2', linked: false },
+      };
+    }
+
+    return slots;
   }
 
   /**
@@ -424,14 +833,32 @@ class MonitorRenderer {
     // 헤더 상태 갱신
     this.renderHeader(data);
 
-    // 슬롯 1 렌더링
-    this.renderSlot1(data.slot1);
+    // 동적 슬롯 카드 목록 렌더링
+    this.renderSlots(data);
 
-    // 슬롯 2 렌더링
-    this.renderSlot2(data.slot2);
+    // 하위 호환 정적 요소 렌더링 (존재할 경우)
+    if (data.slot1) {
+      this.renderSlot1(data.slot1);
+    }
+    if (data.slot2) {
+      this.renderSlot2(data.slot2);
+    }
 
     // 카운트다운 즉시 갱신
     this.tickCountdown();
+  }
+
+  /**
+   * 동적 카드 목록 렌더링
+   * @param {object} data 
+   */
+  renderSlots(data) {
+    const slots = this.extractSlots(data);
+    const html = generateSlotsHtml(slots, { loggingSlots: this.loggingSlots });
+
+    if (this.el.cardsContainer) {
+      this.el.cardsContainer.innerHTML = html;
+    }
   }
 
   /**
@@ -445,8 +872,10 @@ class MonitorRenderer {
       el.lastUpdatedText.textContent = `마지막 갱신: ${formatLastUpdated(ts)}`;
     }
 
-    const hasError = (data.slot1 && data.slot1.success === false) ||
-                     (data.slot2 && data.slot2.linked && data.slot2.success === false);
+    const slots = this.extractSlots(data);
+    const hasError = Object.values(slots).some(
+      (slot) => slot && slot.linked && slot.success === false
+    );
 
     if (hasError) {
       this.setConnectionStatus('error');
@@ -476,19 +905,17 @@ class MonitorRenderer {
   }
 
   /**
-   * 슬롯 1 카드 렌더링
+   * 슬롯 1 카드 렌더링 (하위 호환성)
    */
   renderSlot1(slotData) {
     const { el } = this;
     if (!slotData) return;
 
-    // 이메일
     if (el.slot1Email) {
       el.slot1Email.textContent = slotData.email || '인증 완료 (이메일 미확인)';
       el.slot1Email.title = slotData.email || '';
     }
 
-    // 플랜 배지
     if (el.slot1Plan) {
       const planInfo = getPlanBadgeInfo(slotData.planType);
       el.slot1Plan.textContent = planInfo.label;
@@ -499,7 +926,6 @@ class MonitorRenderer {
     const primary = metrics.primaryWindow || {};
     const secondary = metrics.secondaryWindow || {};
 
-    // 5시간 단위 한도 (Primary Window)
     const pRemaining = typeof primary.remainingPercent === 'number' ? primary.remainingPercent : 0;
     if (el.slot1PrimaryPercent) {
       el.slot1PrimaryPercent.textContent = `${pRemaining}%`;
@@ -512,7 +938,6 @@ class MonitorRenderer {
       el.slot1PrimaryCountdown.textContent = primary.formattedResetText || formatCountdown(primary.resetAfterSeconds || 0);
     }
 
-    // 주간 사용 한도 (Secondary Window)
     const sRemaining = typeof secondary.remainingPercent === 'number' ? secondary.remainingPercent : 0;
     if (el.slot1SecondaryPercent) {
       el.slot1SecondaryPercent.textContent = `${sRemaining}%`;
@@ -527,34 +952,29 @@ class MonitorRenderer {
   }
 
   /**
-   * 슬롯 2 카드 렌더링 (미연동, 로그인 진행 중, 연동 완료)
+   * 슬롯 2 카드 렌더링 (하위 호환성)
    */
   renderSlot2(slotData) {
     const { el } = this;
     const isLinked = Boolean(slotData && slotData.linked);
 
-    // 1. 로그인 진행 중 상태
-    if (this.isLoggingInSlot2) {
+    if (this.loggingSlots['slot2']) {
       this._setSlot2View('logging');
       return;
     }
 
-    // 2. 미연동 상태
     if (!isLinked) {
       this._setSlot2View('unlinked');
       return;
     }
 
-    // 3. 연동 완료 상태
     this._setSlot2View('linked');
 
-    // 이메일
     if (el.slot2Email) {
       el.slot2Email.textContent = slotData.email || '인증 완료 (이메일 미확인)';
       el.slot2Email.title = slotData.email || '';
     }
 
-    // 플랜 배지
     if (el.slot2Plan) {
       const planInfo = getPlanBadgeInfo(slotData.planType);
       el.slot2Plan.textContent = planInfo.label;
@@ -565,7 +985,6 @@ class MonitorRenderer {
     const primary = metrics.primaryWindow || {};
     const secondary = metrics.secondaryWindow || {};
 
-    // 5시간 단위 한도 (Primary Window)
     const pRemaining = typeof primary.remainingPercent === 'number' ? primary.remainingPercent : 0;
     if (el.slot2PrimaryPercent) {
       el.slot2PrimaryPercent.textContent = `${pRemaining}%`;
@@ -578,7 +997,6 @@ class MonitorRenderer {
       el.slot2PrimaryCountdown.textContent = primary.formattedResetText || formatCountdown(primary.resetAfterSeconds || 0);
     }
 
-    // 주간 사용 한도 (Secondary Window)
     const sRemaining = typeof secondary.remainingPercent === 'number' ? secondary.remainingPercent : 0;
     if (el.slot2SecondaryPercent) {
       el.slot2SecondaryPercent.textContent = `${sRemaining}%`;
@@ -593,7 +1011,7 @@ class MonitorRenderer {
   }
 
   /**
-   * 슬롯 2 뷰 전환 도우미
+   * 슬롯 2 뷰 전환 도우미 (하위 호환성)
    * @param {'unlinked' | 'logging' | 'linked'} viewName
    */
   _setSlot2View(viewName) {
@@ -625,37 +1043,36 @@ class MonitorRenderer {
   }
 
   /**
-   * 현재 시간과 resetAt 타임스탬프를 비교하여 화면의 카운트다운 텍스트 갱신
+   * 현재 시간과 resetAt 타임스탬프를 비교하여 화면의 모든 카운트다운 텍스트 갱신
    */
   tickCountdown() {
     if (!this.currentData) return;
     const nowSec = Math.floor(Date.now() / 1000);
-    const { el } = this;
     const toEpochSec = (val) => (val > 1e11 ? Math.floor(val / 1000) : val);
+    const slots = this.extractSlots(this.currentData);
 
-    // 슬롯 1 카운트다운
-    if (this.currentData.slot1) {
-      const s1 = this.currentData.slot1.metrics || this.currentData.slot1;
-      if (s1.primaryWindow?.resetAt && el.slot1PrimaryCountdown) {
-        const diff = Math.max(0, toEpochSec(s1.primaryWindow.resetAt) - nowSec);
-        el.slot1PrimaryCountdown.textContent = formatCountdown(diff);
-      }
-      if (s1.secondaryWindow?.resetAt && el.slot1SecondaryCountdown) {
-        const diff = Math.max(0, toEpochSec(s1.secondaryWindow.resetAt) - nowSec);
-        el.slot1SecondaryCountdown.textContent = formatCountdown(diff);
-      }
-    }
+    for (const [slotId, slot] of Object.entries(slots)) {
+      if (!slot) continue;
+      const metrics = slot.metrics || slot;
 
-    // 슬롯 2 카운트다운
-    if (this.currentData.slot2 && this.currentData.slot2.linked && !this.isLoggingInSlot2) {
-      const s2 = this.currentData.slot2.metrics || this.currentData.slot2;
-      if (s2.primaryWindow?.resetAt && el.slot2PrimaryCountdown) {
-        const diff = Math.max(0, toEpochSec(s2.primaryWindow.resetAt) - nowSec);
-        el.slot2PrimaryCountdown.textContent = formatCountdown(diff);
+      // 5시간 한도 카운트다운
+      if (metrics.primaryWindow?.resetAt) {
+        const diff = Math.max(0, toEpochSec(metrics.primaryWindow.resetAt) - nowSec);
+        const formatted = formatCountdown(diff);
+        const target = this.doc?.getElementById(`${slotId}-primary-countdown`) || this.el?.[`${slotId}PrimaryCountdown`];
+        if (target) {
+          target.textContent = formatted;
+        }
       }
-      if (s2.secondaryWindow?.resetAt && el.slot2SecondaryCountdown) {
-        const diff = Math.max(0, toEpochSec(s2.secondaryWindow.resetAt) - nowSec);
-        el.slot2SecondaryCountdown.textContent = formatCountdown(diff);
+
+      // 주간 한도 카운트다운
+      if (metrics.secondaryWindow?.resetAt) {
+        const diff = Math.max(0, toEpochSec(metrics.secondaryWindow.resetAt) - nowSec);
+        const formatted = formatCountdown(diff);
+        const target = this.doc?.getElementById(`${slotId}-secondary-countdown`) || this.el?.[`${slotId}SecondaryCountdown`];
+        if (target) {
+          target.textContent = formatted;
+        }
       }
     }
   }
@@ -696,50 +1113,128 @@ class MonitorRenderer {
   }
 
   /**
-   * 계정 2 연동 플로우 트리거
+   * 특정 슬롯 연동 플로우 트리거
+   * @param {string} slotId 
    */
-  async handleSlot2Login() {
-    this.isLoggingInSlot2 = true;
-    this.renderSlot2(this.currentData?.slot2);
+  async handleLoginSlot(slotId) {
+    this.loggingSlots[slotId] = true;
+    this.renderSlots(this.currentData);
+    if (slotId === 'slot2') this.renderSlot2(this.currentData?.slot2);
 
     try {
       if (this.api) {
-        const loginFn = this.api.startLoginSlot2 || this.api.loginSlot2 || this.api.loginAccount2;
+        const loginFn = this.api.loginSlot || (slotId === 'slot2' ? this.api.startLoginSlot2 : null);
         if (typeof loginFn === 'function') {
-          await loginFn();
-          // 로그인 완료 후 최신 데이터 재조회
+          await loginFn(slotId);
           await this.handleRefresh();
-          this.showToast('계정 2 연동이 성공적으로 완료되었습니다.', 'success');
+          this.showToast(`계정(${slotId}) 연동이 완료되었습니다.`, 'success');
           return;
         }
       }
-      // API 미제공 시 모의 완료
-      this.showToast('계정 2 연동이 완료되었습니다.', 'success');
+      this.showToast(`계정(${slotId}) 연동이 완료되었습니다.`, 'success');
     } catch (err) {
       this.showToast(`연동 실패: ${err?.message || '로그인이 취소되었습니다.'}`, 'error');
     } finally {
-      this.isLoggingInSlot2 = false;
-      this.renderSlot2(this.currentData?.slot2);
+      delete this.loggingSlots[slotId];
+      this.renderSlots(this.currentData);
+      if (slotId === 'slot2') this.renderSlot2(this.currentData?.slot2);
     }
   }
 
   /**
-   * 계정 2 연동 취소
+   * 특정 슬롯 연동 취소
+   * @param {string} slotId 
    */
-  async handleCancelSlot2Login() {
-    this.isLoggingInSlot2 = false;
+  async handleCancelLoginSlot(slotId) {
+    delete this.loggingSlots[slotId];
     try {
       if (this.api) {
-        const cancelFn = this.api.cancelLoginSlot2 || this.api.cancelLogin;
+        const cancelFn = this.api.cancelLogin || (slotId === 'slot2' ? this.api.cancelLoginSlot2 : null);
         if (typeof cancelFn === 'function') {
-          await cancelFn();
+          await cancelFn(slotId);
         }
       }
-      this.showToast('계정 2 연동이 취소되었습니다.');
+      this.showToast(`계정(${slotId}) 연동이 취소되었습니다.`);
     } catch {
       // 무시
     } finally {
-      this.renderSlot2(this.currentData?.slot2);
+      this.renderSlots(this.currentData);
+      if (slotId === 'slot2') this.renderSlot2(this.currentData?.slot2);
+    }
+  }
+
+  /**
+   * 하위 호환용 slot2 로그인 트리거
+   */
+  async handleSlot2Login() {
+    return this.handleLoginSlot('slot2');
+  }
+
+  /**
+   * 하위 호환용 slot2 로그인 취소
+   */
+  async handleCancelSlot2Login() {
+    return this.handleCancelLoginSlot('slot2');
+  }
+
+  /**
+   * 계정 로그아웃 처리
+   * @param {string} slotId 
+   */
+  async handleLogout(slotId) {
+    const confirmed = typeof window !== 'undefined' && typeof window.confirm === 'function'
+      ? window.confirm(`계정(${slotId})에서 로그아웃하시겠습니까?`)
+      : true;
+
+    if (!confirmed) return;
+
+    try {
+      if (this.api && typeof this.api.logoutSlot === 'function') {
+        await this.api.logoutSlot(slotId);
+      }
+      await this.handleRefresh();
+      this.showToast(`계정(${slotId})에서 로그아웃되었습니다.`, 'success');
+    } catch (err) {
+      this.showToast(`로그아웃 실패: ${err?.message || '오류'}`, 'error');
+    }
+  }
+
+  /**
+   * 새 계정 슬롯 추가
+   */
+  async handleAddSlot() {
+    try {
+      if (this.api && typeof this.api.addSlot === 'function') {
+        const result = await this.api.addSlot();
+        await this.handleRefresh();
+        this.showToast(`새 계정(${result?.slotId || '슬롯'})이 추가되었습니다.`, 'success');
+        return;
+      }
+      this.showToast('새 슬롯 추가를 지원하지 않는 환경입니다.', 'error');
+    } catch (err) {
+      this.showToast(`계정 추가 실패: ${err?.message || '오류'}`, 'error');
+    }
+  }
+
+  /**
+   * 계정 슬롯 삭제
+   * @param {string} slotId 
+   */
+  async handleDeleteSlot(slotId) {
+    const confirmed = typeof window !== 'undefined' && typeof window.confirm === 'function'
+      ? window.confirm(`계정(${slotId}) 카드를 삭제하시겠습니까?`)
+      : true;
+
+    if (!confirmed) return;
+
+    try {
+      if (this.api && typeof this.api.removeSlot === 'function') {
+        await this.api.removeSlot(slotId);
+      }
+      await this.handleRefresh();
+      this.showToast(`계정(${slotId}) 카드가 삭제되었습니다.`, 'success');
+    } catch (err) {
+      this.showToast(`삭제 실패: ${err?.message || '오류'}`, 'error');
     }
   }
 
@@ -882,6 +1377,10 @@ if (typeof module !== 'undefined' && module.exports) {
     getProgressColorClass,
     getPlanBadgeInfo,
     formatLastUpdated,
+    getNextTheme,
+    escapeHtml,
+    getSlotBadgeClass,
+    generateSlotsHtml,
     createMockUsageData,
     createMockConfig,
     MonitorRenderer,

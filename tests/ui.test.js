@@ -16,6 +16,8 @@ const {
   formatLastUpdated,
   createMockUsageData,
   createMockConfig,
+  getNextTheme,
+  generateSlotsHtml,
   MonitorRenderer,
 } = require('../src/ui/renderer.js');
 
@@ -126,6 +128,45 @@ describe('UI 컴포넌트 및 렌더러 단위 테스트', () => {
     });
   });
 
+  describe('getNextTheme - 다크/라이트 테마 전환', () => {
+    it('toggleTheme switches between dark and light themes', () => {
+      const current = 'dark';
+      const next = getNextTheme(current);
+      assert.strictEqual(next, 'light');
+    });
+
+    it('light 테마에서는 dark로 전환되어야 한다', () => {
+      assert.strictEqual(getNextTheme('light'), 'dark');
+      assert.strictEqual(getNextTheme(null), 'light');
+    });
+  });
+
+  describe('generateSlotsHtml - 임의 개수의 동적 슬롯 HTML 마크업 생성', () => {
+    it('renderSlots generates cards for arbitrary number of slots', () => {
+      const slotsData = {
+        slot1: { linked: true, email: 'a@test.com' },
+        slot2: { linked: false },
+        slot3: { linked: true, email: 'c@test.com' }
+      };
+      const html = generateSlotsHtml(slotsData);
+      assert.ok(html.includes('slot1'));
+      assert.ok(html.includes('slot2'));
+      assert.ok(html.includes('slot3'));
+      assert.ok(html.includes('로그아웃'));
+    });
+
+    it('3개 이상의 슬롯에서 미연동 카드에는 "카드 삭제" 버튼이 포함되어야 한다', () => {
+      const slotsData = {
+        slot1: { linked: true, email: 'a@test.com' },
+        slot2: { linked: false },
+        slot3: { linked: false }
+      };
+      const html = generateSlotsHtml(slotsData);
+      assert.ok(html.includes('카드 삭제'));
+      assert.ok(html.includes('data-slot="slot3"'));
+    });
+  });
+
   describe('HTML 마크업 구조 무결성 검증 (src/ui/index.html)', () => {
     const htmlPath = path.resolve(__dirname, '../src/ui/index.html');
     let htmlContent = '';
@@ -135,46 +176,26 @@ describe('UI 컴포넌트 및 렌더러 단위 테스트', () => {
     });
 
     it('HTML 파일이 존재하고 한국어 lang 속성과 적절한 메타 태그를 포함해야 한다', () => {
-      assert.ok(htmlContent.includes('<html lang="ko">'));
+      assert.ok(htmlContent.includes('<html lang="ko"'));
       assert.ok(htmlContent.includes('ChatGPT 사용량 모니터'));
       assert.ok(htmlContent.includes('style.css'));
       assert.ok(htmlContent.includes('renderer.js'));
     });
 
-    it('헤더 영역 필수 요소(타이틀, 상태 표시, 새로고침 및 설정 버튼)가 존재해야 한다', () => {
+    it('헤더 영역 필수 요소(타이틀, 상태 표시, 핀, 테마, 새로고침, 설정, 닫기 버튼)가 존재해야 한다', () => {
       assert.ok(htmlContent.includes('id="connection-indicator"'));
       assert.ok(htmlContent.includes('id="last-updated-text"'));
-      assert.ok(htmlContent.includes('id="btn-refresh"'));
-      assert.ok(htmlContent.includes('id="btn-settings"'));
+      assert.ok(htmlContent.includes('id="pinBtn"'));
+      assert.ok(htmlContent.includes('id="themeBtn"'));
+      assert.ok(htmlContent.includes('id="refreshBtn"'));
+      assert.ok(htmlContent.includes('id="settingsBtn"'));
+      assert.ok(htmlContent.includes('id="closeBtn"'));
     });
 
-    it('계정 1(Slot 1) 카드 필수 요소가 존재해야 한다', () => {
-      assert.ok(htmlContent.includes('id="slot1-card"'));
-      assert.ok(htmlContent.includes('id="slot1-email"'));
-      assert.ok(htmlContent.includes('id="slot1-plan"'));
-      assert.ok(htmlContent.includes('id="slot1-primary-percent"'));
-      assert.ok(htmlContent.includes('id="slot1-primary-bar"'));
-      assert.ok(htmlContent.includes('id="slot1-primary-countdown"'));
-      assert.ok(htmlContent.includes('id="slot1-secondary-percent"'));
-      assert.ok(htmlContent.includes('id="slot1-secondary-bar"'));
-      assert.ok(htmlContent.includes('id="slot1-secondary-countdown"'));
-    });
-
-    it('계정 2(Slot 2) 카드 필수 3단계 뷰 및 액션 버튼이 존재해야 한다', () => {
-      assert.ok(htmlContent.includes('id="slot2-card"'));
-      // 1. 미연동 뷰 및 연동 버튼
-      assert.ok(htmlContent.includes('id="slot2-unlinked-view"'));
-      assert.ok(htmlContent.includes('id="btn-login-slot2"'));
-      assert.ok(htmlContent.includes('+ 계정 2 연동하기'));
-      // 2. 로그인 진행 중 뷰 및 취소 버튼
-      assert.ok(htmlContent.includes('id="slot2-logging-view"'));
-      assert.ok(htmlContent.includes('id="btn-cancel-login-slot2"'));
-      assert.ok(htmlContent.includes('브라우저에서 로그인 대기 중...'));
-      // 3. 연동 완료 뷰
-      assert.ok(htmlContent.includes('id="slot2-linked-view"'));
-      assert.ok(htmlContent.includes('id="slot2-email"'));
-      assert.ok(htmlContent.includes('id="slot2-primary-bar"'));
-      assert.ok(htmlContent.includes('id="slot2-secondary-bar"'));
+    it('동적 카드 컨테이너(#cardsContainer) 및 계정 추가 버튼(#addSlotBtn)이 존재해야 한다', () => {
+      assert.ok(htmlContent.includes('id="cardsContainer"'));
+      assert.ok(htmlContent.includes('id="addSlotBtn"'));
+      assert.ok(htmlContent.includes('+ 새 계정 추가'));
     });
 
     it('설정 모달 및 필수 옵션 컨트롤들이 존재해야 한다', () => {
@@ -197,20 +218,33 @@ describe('UI 컴포넌트 및 렌더러 단위 테스트', () => {
       cssContent = fs.readFileSync(cssPath, 'utf-8');
     });
 
-    it('다크 테마 색상 변수와 컴포넌트 스타일이 정의되어 있어야 한다', () => {
+    it('다크 및 라이트 테마 색상 변수와 컴포넌트 스타일이 정의되어 있어야 한다', () => {
       assert.ok(cssContent.includes('--bg-app'));
       assert.ok(cssContent.includes('--bg-card'));
       assert.ok(cssContent.includes('--color-brand'));
+      assert.ok(cssContent.includes('[data-theme="light"]'));
       assert.ok(cssContent.includes('.progress-green'));
       assert.ok(cssContent.includes('.progress-yellow'));
       assert.ok(cssContent.includes('.progress-red'));
     });
 
-    it('새로고침 스핀 애니메이션 및 스위치 스타일이 정의되어 있어야 한다', () => {
-      assert.ok(cssContent.includes('@keyframes spin'));
-      assert.ok(cssContent.includes('.spinning'));
-      assert.ok(cssContent.includes('.switch'));
-      assert.ok(cssContent.includes('.slider'));
+    it('헤더 드래그 영역(-webkit-app-region: drag) 및 버튼 no-drag가 정의되어 있어야 한다', () => {
+      assert.ok(cssContent.includes('-webkit-app-region: drag'));
+      assert.ok(cssContent.includes('-webkit-app-region: no-drag'));
+    });
+
+    it('핀 버튼 활성화 스타일 및 동적 카드 스크롤바가 정의되어 있어야 한다', () => {
+      assert.ok(cssContent.includes('#pinBtn.active') || cssContent.includes('.btn-icon.active'));
+      assert.ok(cssContent.includes('.cards-container'));
+      assert.ok(cssContent.includes('max-height: calc(100vh - 120px)'));
+      assert.ok(cssContent.includes('.cards-container::-webkit-scrollbar'));
+    });
+
+    it('카드 액션 버튼([로그아웃], [카드 삭제]) 및 새 계정 추가 버튼 스타일이 정의되어 있어야 한다', () => {
+      assert.ok(cssContent.includes('.btn-card-action'));
+      assert.ok(cssContent.includes('.btn-logout'));
+      assert.ok(cssContent.includes('.btn-delete-slot'));
+      assert.ok(cssContent.includes('.btn-add-slot'));
     });
   });
 
@@ -220,10 +254,15 @@ describe('UI 컴포넌트 및 렌더러 단위 테스트', () => {
       return {
         id,
         textContent: '',
+        innerHTML: '',
         value: '',
         checked: false,
         title: '',
         style: {},
+        attributes: {},
+        dataset: {},
+        setAttribute(k, v) { this.attributes[k] = String(v); },
+        getAttribute(k) { return this.attributes[k]; },
         classList: {
           classes: new Set(),
           add(c) { this.classes.add(c); },
@@ -257,6 +296,8 @@ describe('UI 컴포넌트 및 렌더러 단위 테스트', () => {
       const elementMap = new Map();
       const ids = [
         'connection-indicator', 'last-updated-text', 'btn-refresh', 'btn-settings',
+        'pinBtn', 'themeBtn', 'refreshBtn', 'settingsBtn', 'closeBtn',
+        'cardsContainer', 'addSlotBtn',
         'slot1-email', 'slot1-plan', 'slot1-primary-percent', 'slot1-primary-bar',
         'slot1-primary-countdown', 'slot1-secondary-percent', 'slot1-secondary-bar',
         'slot1-secondary-countdown', 'slot2-unlinked-view', 'slot2-logging-view',
@@ -274,6 +315,13 @@ describe('UI 컴포넌트 및 렌더러 단위 테스트', () => {
       }
 
       return {
+        documentElement: {
+          dataset: { theme: 'dark' },
+        },
+        body: {
+          setAttribute(k, v) {},
+          classList: createMockElement('body').classList,
+        },
         getElementById(id) {
           return elementMap.get(id) || null;
         },
@@ -291,6 +339,13 @@ describe('UI 컴포넌트 및 렌더러 단위 테스트', () => {
         refreshUsage: async () => createMockUsageData(),
         getConfig: async () => createMockConfig(),
         saveConfig: async (patch) => ({ ...createMockConfig(), ...patch }),
+        setTheme: async ({ theme }) => ({ theme }),
+        setPinMode: async ({ isPinned }) => ({ isPinned }),
+        getPinMode: async () => ({ isPinned: false }),
+        closeWindow: async () => ({ closed: true }),
+        logoutSlot: async (slotId) => ({ success: true }),
+        addSlot: async () => ({ slotId: 'slot3', slots: ['slot1', 'slot2', 'slot3'] }),
+        removeSlot: async (slotId) => ({ success: true, slots: ['slot1', 'slot2'] }),
         startLoginSlot2: async () => ({ success: true }),
         cancelLoginSlot2: async () => ({ cancelled: true }),
         onUsageUpdated: () => {},
@@ -415,6 +470,127 @@ describe('UI 컴포넌트 및 렌더러 단위 테스트', () => {
 
       renderer.tickCountdown();
       assert.strictEqual(renderer.el.slot1PrimaryCountdown.textContent, '20분 후 초기화');
+    });
+
+    it('togglePinMode 호출 시 핀 상태가 토글되고 setPinMode API가 호출되어야 한다', async () => {
+      let pinPayload = null;
+      mockApi.setPinMode = async (payload) => {
+        pinPayload = payload;
+        return payload;
+      };
+
+      // 1회 클릭: 핀 활성화
+      await renderer.togglePinMode();
+      assert.strictEqual(renderer.isPinned, true);
+      assert.deepStrictEqual(pinPayload, { isPinned: true });
+      assert.strictEqual(renderer.el.pinBtn.classList.contains('active'), true);
+
+      // 2회 클릭: 핀 해제
+      await renderer.togglePinMode();
+      assert.strictEqual(renderer.isPinned, false);
+      assert.deepStrictEqual(pinPayload, { isPinned: false });
+      assert.strictEqual(renderer.el.pinBtn.classList.contains('active'), false);
+    });
+
+    it('toggleTheme 호출 시 테마가 전환되고 document dataset 및 setTheme API가 호출되어야 한다', async () => {
+      let themePayload = null;
+      mockApi.setTheme = async (payload) => {
+        themePayload = payload;
+        return payload;
+      };
+
+      // 초기 'dark'에서 light로 전환
+      await renderer.toggleTheme();
+      assert.strictEqual(renderer.currentTheme, 'light');
+      assert.strictEqual(mockDoc.documentElement.dataset.theme, 'light');
+      assert.deepStrictEqual(themePayload, { theme: 'light' });
+
+      // light에서 dark로 다시 전환
+      await renderer.toggleTheme();
+      assert.strictEqual(renderer.currentTheme, 'dark');
+      assert.strictEqual(mockDoc.documentElement.dataset.theme, 'dark');
+      assert.deepStrictEqual(themePayload, { theme: 'dark' });
+    });
+
+    it('closeWindow 호출 시 closeWindow API를 호출해야 한다', async () => {
+      let closed = false;
+      mockApi.closeWindow = async () => {
+        closed = true;
+      };
+
+      await renderer.closeWindow();
+      assert.strictEqual(closed, true);
+    });
+
+    it('handleLogout 호출 시 logoutSlot API를 호출하고 데이터를 갱신해야 한다', async () => {
+      let loggedOutSlot = null;
+      let refreshCount = 0;
+
+      mockApi.logoutSlot = async (slotId) => {
+        loggedOutSlot = slotId;
+        return { success: true };
+      };
+      mockApi.refreshUsage = async () => {
+        refreshCount++;
+        return createMockUsageData();
+      };
+
+      await renderer.handleLogout('slot1');
+      assert.strictEqual(loggedOutSlot, 'slot1');
+      assert.strictEqual(refreshCount, 1);
+    });
+
+    it('handleAddSlot 호출 시 addSlot API를 호출하고 데이터를 갱신해야 한다', async () => {
+      let addSlotCalled = false;
+      let refreshCount = 0;
+
+      mockApi.addSlot = async () => {
+        addSlotCalled = true;
+        return { slotId: 'slot3', slots: ['slot1', 'slot2', 'slot3'] };
+      };
+      mockApi.refreshUsage = async () => {
+        refreshCount++;
+        return createMockUsageData();
+      };
+
+      await renderer.handleAddSlot();
+      assert.strictEqual(addSlotCalled, true);
+      assert.strictEqual(refreshCount, 1);
+    });
+
+    it('handleDeleteSlot 호출 시 removeSlot API를 호출하고 데이터를 갱신해야 한다', async () => {
+      let removedSlot = null;
+      let refreshCount = 0;
+
+      mockApi.removeSlot = async (slotId) => {
+        removedSlot = slotId;
+        return { success: true, slots: ['slot1', 'slot2'] };
+      };
+      mockApi.refreshUsage = async () => {
+        refreshCount++;
+        return createMockUsageData();
+      };
+
+      await renderer.handleDeleteSlot('slot3');
+      assert.strictEqual(removedSlot, 'slot3');
+      assert.strictEqual(refreshCount, 1);
+    });
+
+    it('renderUsage 호출 시 cardsContainer.innerHTML에 동적 카드 목록이 렌더링되어야 한다', () => {
+      const data = {
+        slot1: { slotId: 'slot1', linked: true, email: 'user1@test.com' },
+        slot2: { slotId: 'slot2', linked: false },
+        slot3: { slotId: 'slot3', linked: true, email: 'user3@test.com' },
+      };
+
+      renderer.renderUsage(data);
+      const innerHtml = renderer.el.cardsContainer.innerHTML;
+      assert.ok(innerHtml.includes('slot1-card'));
+      assert.ok(innerHtml.includes('slot2-card'));
+      assert.ok(innerHtml.includes('slot3-card'));
+      assert.ok(innerHtml.includes('user1@test.com'));
+      assert.ok(innerHtml.includes('user3@test.com'));
+      assert.ok(innerHtml.includes('로그아웃'));
     });
   });
 });
