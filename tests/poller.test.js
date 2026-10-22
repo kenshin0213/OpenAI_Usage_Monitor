@@ -24,9 +24,14 @@ const {
   startPolling,
   getLatestPollResult,
   resetPollerState,
+  cleanupSlot,
+  cleanupRemovedSlots,
+  recordWindowNotified,
+  hasNotifiedWindow,
 } = require('../src/poller.js');
+const poller = require('../src/poller.js');
 
-const { setConfigDir, resetConfigDir, saveSlot, updateConfig } = require('../src/config.js');
+const { setConfigDir, resetConfigDir, saveSlot, updateConfig, getSlots, addSlot } = require('../src/config.js');
 
 /**
  * 테스트용 정규화된 사용량 메트릭 모의 생성 헬퍼
@@ -452,6 +457,108 @@ describe('poller.js - 다중 슬롯 병렬 폴링 (pollAllSlots)', () => {
     assert.match(result.slot1.error, /ETIMEDOUT/);
     assert.equal(result.slot2.success, false);
     assert.match(result.slot2.error, /ETIMEDOUT/);
+  });
+});
+
+describe('poller.js - 동적 N개 다중 슬롯 순회 및 슬롯 정리 (cleanupSlot)', () => {
+  let tempDir;
+  let sentNotifications;
+
+  beforeEach(async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'poller-dynamic-test-'));
+    setConfigDir(tempDir);
+    resetPollerState();
+    sentNotifications = [];
+    setNotificationSender(async (p) => {
+      sentNotifications.push(p);
+      return { success: true };
+    });
+  });
+
+  afterEach(async () => {
+    resetConfigDir();
+    resetPollerState();
+    resetNotificationSender();
+    if (tempDir) {
+      await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it('pollAllSlots iterates over all slots returned by getSlots()', async () => {
+    // getSlots mocks ['slot1', 'slot2', 'slot3']
+    const mockMetrics = {
+      slot1: createMockMetrics({ primaryRemaining: 70 }),
+      slot2: createMockMetrics({ primaryRemaining: 80 }),
+      slot3: createMockMetrics({ primaryRemaining: 90 }),
+    };
+
+    const result = await poller.pollAllSlots({
+      getSlotsFn: async () => ['slot1', 'slot2', 'slot3'],
+      fetchUsageFn: async (slotId) => mockMetrics[slotId],
+      configDir: tempDir,
+    });
+
+    assert.ok(result.slot1);
+    assert.ok(result.slot2);
+    assert.ok(result.slot3);
+    assert.equal(result.slot1.metrics.primaryWindow.remainingPercent, 70);
+    assert.equal(result.slot2.metrics.primaryWindow.remainingPercent, 80);
+    assert.equal(result.slot3.metrics.primaryWindow.remainingPercent, 90);
+  });
+
+  it('cleanupRemovedSlots removes notifiedWindows for deleted slots', () => {
+    poller.recordWindowNotified('slot3', 'primary', 12345);
+    poller.cleanupSlot('slot3');
+    assert.strictEqual(poller.hasNotifiedWindow('slot3', 'primary', 12345), false);
+  });
+
+  it('config.json에 등록된 다중 슬롯을 config.getSlots를 통해 자동으로 순회해야 한다', async () => {
+    await updateConfig({ slots: ['slot1', 'slot2', 'slot3', 'slot4'] }, { configDir: tempDir });
+
+    const fetchUsageMock = async (slotId) => {
+      return createMockMetrics({ primaryRemaining: 50, email: `${slotId}@openai.com` });
+    };
+
+    const result = await pollAllSlots({
+      fetchUsageFn: fetchUsageMock,
+      configDir: tempDir,
+    });
+
+    assert.ok(result.slot1);
+    assert.ok(result.slot2);
+    assert.ok(result.slot3);
+    assert.ok(result.slot4);
+    assert.equal(result.slot3.email, 'slot3@openai.com');
+    assert.equal(result.slot4.email, 'slot4@openai.com');
+  });
+
+  it('동적 슬롯(slot3 등)에서 임계치 경고 알림 시 적절한 슬롯 라벨([계정 3])을 부여해야 한다', async () => {
+    const mockMetrics = {
+      slot1: createMockMetrics({ primaryRemaining: 80 }),
+      slot3: createMockMetrics({ primaryRemaining: 5, primaryResetAt: 1700000000, email: 'acc3@openai.com' }),
+    };
+
+    await pollAllSlots({
+      getSlotsFn: async () => ['slot1', 'slot3'],
+      fetchUsageFn: async (slotId) => mockMetrics[slotId],
+      configDir: tempDir,
+    });
+
+    assert.equal(sentNotifications.length, 1);
+    assert.match(sentNotifications[0].title, /계정 3/);
+    assert.match(sentNotifications[0].body, /5%/);
+  });
+
+  it('cleanupRemovedSlots(activeSlots) 호출 시 활성 목록에 없는 모든 슬롯의 상태와 알림 기록을 정리해야 한다', () => {
+    poller.recordWindowNotified('slot1', 'primary', 1111);
+    poller.recordWindowNotified('slot3', 'primary', 3333);
+    poller.recordWindowNotified('slot4', 'primary', 4444);
+
+    cleanupRemovedSlots(['slot1', 'slot2']);
+
+    assert.strictEqual(poller.hasNotifiedWindow('slot1', 'primary', 1111), true);
+    assert.strictEqual(poller.hasNotifiedWindow('slot3', 'primary', 3333), false);
+    assert.strictEqual(poller.hasNotifiedWindow('slot4', 'primary', 4444), false);
   });
 });
 

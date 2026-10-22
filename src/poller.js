@@ -12,7 +12,7 @@
  */
 
 const { fetchUsage } = require('./api.js');
-const { getConfig, normalizeSlotId } = require('./config.js');
+const { getConfig, getSlots, normalizeSlotId } = require('./config.js');
 const { sendNotification } = require('./notifier.js');
 
 /**
@@ -24,19 +24,128 @@ let pollerState = {
 };
 
 /**
+ * 발송된 알림 리셋 윈도우 추적 Set (동일 리셋 윈도우 내 중복 방지 및 메모리 누수 방지)
+ * 포맷: `${slotId}:${windowType}:${resetAt}` (예: 'slot1:primary:1700000000')
+ */
+const notifiedWindows = new Set();
+
+/**
  * 가장 최근에 성공/정규화된 전체 폴링 결과 캐시
  */
 let latestPollResult = null;
 
 /**
- * 폴러 내부 상태를 초기화합니다 (단위 테스트 및 계정 전환용).
+ * 폴러 내부 상태 및 알림 발송 기록을 초기화합니다 (단위 테스트 및 계정 전환용).
  */
 function resetPollerState() {
   pollerState = {
     slot1: { prevMetrics: null, lastAlertedResetAt: null },
     slot2: { prevMetrics: null, lastAlertedResetAt: null },
   };
+  notifiedWindows.clear();
   latestPollResult = null;
+}
+
+/**
+ * 지정된 슬롯과 리셋 윈도우에 대해 알림 발송 완료 상태를 기록합니다.
+ * @param {string|number} slotId 슬롯 식별자 (예: 'slot1', 'slot2', 'slot3')
+ * @param {string} windowType 윈도우 유형 ('primary' | 'secondary')
+ * @param {string|number} resetAt 리셋 시각
+ */
+function recordWindowNotified(slotId, windowType, resetAt) {
+  let normalized = slotId;
+  try {
+    normalized = normalizeSlotId(slotId);
+  } catch {
+    normalized = String(slotId);
+  }
+  notifiedWindows.add(`${normalized}:${windowType}:${resetAt}`);
+}
+
+/**
+ * 지정된 슬롯과 리셋 윈도우에 대해 이미 알림이 발송되었는지 여부를 확인합니다.
+ * @param {string|number} slotId 슬롯 식별자 (예: 'slot1', 'slot2', 'slot3')
+ * @param {string} windowType 윈도우 유형 ('primary' | 'secondary')
+ * @param {string|number} resetAt 리셋 시각
+ * @returns {boolean}
+ */
+function hasNotifiedWindow(slotId, windowType, resetAt) {
+  let normalized = slotId;
+  try {
+    normalized = normalizeSlotId(slotId);
+  } catch {
+    normalized = String(slotId);
+  }
+  return notifiedWindows.has(`${normalized}:${windowType}:${resetAt}`);
+}
+
+/**
+ * 특정 슬롯의 폴러 상태 및 알림 윈도우 기록을 정리합니다.
+ * 슬롯 삭제 또는 로그아웃 시 호출되어 메모리 누수를 방지합니다.
+ * @param {string|number} slotId 슬롯 식별자
+ * @param {object} [state] 정리 대상 상태 객체 (미지정 시 전역 pollerState)
+ */
+function cleanupSlot(slotId, state = pollerState) {
+  let normalized = slotId;
+  try {
+    normalized = normalizeSlotId(slotId);
+  } catch {
+    normalized = String(slotId);
+  }
+
+  // 1. notifiedWindows에서 해당 슬롯으로 시작하는 모든 키 제거
+  const prefix = `${normalized}:`;
+  for (const key of notifiedWindows) {
+    if (key.startsWith(prefix)) {
+      notifiedWindows.delete(key);
+    }
+  }
+
+  // 2. 전달된 state 및 전역 pollerState에서 해당 슬롯 상태 제거
+  if (state && state[normalized]) {
+    delete state[normalized];
+  }
+  if (pollerState && pollerState[normalized]) {
+    delete pollerState[normalized];
+  }
+
+  // 3. 최신 폴링 캐시 결과에서도 해당 슬롯 데이터 제거
+  if (latestPollResult && latestPollResult[normalized]) {
+    delete latestPollResult[normalized];
+  }
+}
+
+/**
+ * 현재 활성 슬롯 목록에 포함되지 않는 모든 제거된 슬롯들의 상태를 일괄 정리합니다.
+ * @param {string[]} [activeSlots] 현재 활성화된 슬롯 식별자 목록
+ * @param {object} [state] 정리 대상 상태 객체
+ */
+function cleanupRemovedSlots(activeSlots = ['slot1', 'slot2'], state = pollerState) {
+  if (!Array.isArray(activeSlots)) {
+    activeSlots = ['slot1', 'slot2'];
+  }
+  const activeSet = new Set(activeSlots.map((s) => {
+    try {
+      return normalizeSlotId(s);
+    } catch {
+      return String(s);
+    }
+  }));
+
+  const targetState = state || pollerState;
+  for (const slotId of Object.keys(targetState)) {
+    if (!activeSet.has(slotId)) {
+      cleanupSlot(slotId, targetState);
+    }
+  }
+
+  for (const key of notifiedWindows) {
+    const parts = key.split(':');
+    const slotId = parts[0];
+    if (!activeSet.has(slotId)) {
+      notifiedWindows.delete(key);
+    }
+  }
 }
 
 /**
@@ -81,7 +190,9 @@ function evaluateNotifications(slotId, prevMetrics, currMetrics, config = {}, st
   }
   const slotState = state[normalizedId];
 
-  const slotLabel = normalizedId === 'slot2' ? '계정 2' : '계정 1';
+  const match = normalizedId.match(/^slot(\d+)$/i);
+  const slotNum = match ? match[1] : normalizedId;
+  const slotLabel = `계정 ${slotNum}`;
   const emailSuffix = currMetrics.email ? ` (${currMetrics.email})` : '';
 
   const thresholdPercent = config.alertThresholdPercent ?? 10;
@@ -94,7 +205,8 @@ function evaluateNotifications(slotId, prevMetrics, currMetrics, config = {}, st
 
   // 1. 임계치 경고 알림 평가
   if (notifyOnThreshold && currRemaining !== null && currRemaining <= thresholdPercent) {
-    const alreadyAlertedForThisWindow = (slotState.lastAlertedResetAt === currentResetAt);
+    const alreadyAlertedForThisWindow = (slotState.lastAlertedResetAt === currentResetAt) ||
+      (state === pollerState && hasNotifiedWindow(normalizedId, 'primary', currentResetAt));
 
     if (!alreadyAlertedForThisWindow) {
       const resetText = currPrimary.formattedResetText ? ` (${currPrimary.formattedResetText})` : '';
@@ -108,6 +220,9 @@ function evaluateNotifications(slotId, prevMetrics, currMetrics, config = {}, st
 
       // 동일 윈도우 중복 발송 방지를 위해 기록
       slotState.lastAlertedResetAt = currentResetAt;
+      if (state === pollerState) {
+        recordWindowNotified(normalizedId, 'primary', currentResetAt);
+      }
     }
   }
 
@@ -192,19 +307,21 @@ function normalizeSlotResult(slotId, settledResult) {
 }
 
 /**
- * 등록된 슬롯 1, 슬롯 2의 사용량을 병렬로 조회하고 결과를 정규화 및 알림 평가합니다.
+ * 등록된 모든 활성 슬롯의 사용량을 병렬로 조회하고 결과를 정규화 및 알림 평가합니다.
  * 
  * @param {object} [options]
  * @param {Function} [options.fetchUsageFn]
  * @param {Function} [options.getConfigFn]
+ * @param {Function} [options.getSlotsFn]
  * @param {Function} [options.notifyFn]
  * @param {string} [options.configDir]
  * @param {object} [options.state]
- * @returns {Promise<{ slot1: object, slot2: object, timestamp: number }>}
+ * @returns {Promise<Record<string, object> & { timestamp: number }>}
  */
 async function pollAllSlots(options = {}) {
   const fetchFn = options.fetchUsageFn || fetchUsage;
   const getConfigFn = options.getConfigFn || getConfig;
+  const getSlotsFn = options.getSlotsFn || getSlots;
   const state = options.state || pollerState;
 
   // 1. 현재 설정 로드
@@ -215,39 +332,52 @@ async function pollAllSlots(options = {}) {
     config = {};
   }
 
-  // 2. 슬롯 1, 슬롯 2 병렬 조회
-  const [slot1Settled, slot2Settled] = await Promise.allSettled([
-    fetchFn('slot1', options),
-    fetchFn('slot2', options),
-  ]);
-
-  // 3. 응답 결과 정규화
-  const slot1Data = normalizeSlotResult('slot1', slot1Settled);
-  const slot2Data = normalizeSlotResult('slot2', slot2Settled);
-
-  // 4. 슬롯 1 알림 평가
-  if (slot1Data.success && slot1Data.metrics) {
-    if (!state.slot1) state.slot1 = { prevMetrics: null, lastAlertedResetAt: null };
-    const prev1 = state.slot1.prevMetrics;
-    evaluateNotifications('slot1', prev1, slot1Data.metrics, config, state, options);
-    state.slot1.prevMetrics = slot1Data.metrics;
+  // 2. 활성화된 슬롯 목록 조회 (getSlotsFn 우선, config.slots 폴백, 기본 ['slot1', 'slot2'])
+  let activeSlots = ['slot1', 'slot2'];
+  try {
+    const slots = await getSlotsFn({ configDir: options.configDir });
+    if (Array.isArray(slots) && slots.length > 0) {
+      activeSlots = slots;
+    } else if (Array.isArray(config.slots) && config.slots.length > 0) {
+      activeSlots = config.slots;
+    }
+  } catch {
+    if (Array.isArray(config.slots) && config.slots.length > 0) {
+      activeSlots = config.slots;
+    }
   }
 
-  // 5. 슬롯 2 알림 평가
-  if (slot2Data.success && slot2Data.metrics) {
-    if (!state.slot2) state.slot2 = { prevMetrics: null, lastAlertedResetAt: null };
-    const prev2 = state.slot2.prevMetrics;
-    evaluateNotifications('slot2', prev2, slot2Data.metrics, config, state, options);
-    state.slot2.prevMetrics = slot2Data.metrics;
-  }
+  // 제거된 슬롯 상태 정리 (메모리 누수 방지)
+  cleanupRemovedSlots(activeSlots, state);
+
+  // 3. 모든 활성 슬롯 병렬 사용량 조회
+  const settledResults = await Promise.allSettled(
+    activeSlots.map((slotId) => fetchFn(slotId, options))
+  );
 
   const result = {
-    slot1: slot1Data,
-    slot2: slot2Data,
     timestamp: Date.now(),
   };
 
-  // 6. 최신 결과 메모리 캐싱
+  // 4. 슬롯별 결과 정규화 및 알림 평가
+  for (let i = 0; i < activeSlots.length; i++) {
+    const slotId = activeSlots[i];
+    const settled = settledResults[i];
+    const slotData = normalizeSlotResult(slotId, settled);
+
+    if (slotData.success && slotData.metrics) {
+      if (!state[slotId]) {
+        state[slotId] = { prevMetrics: null, lastAlertedResetAt: null };
+      }
+      const prev = state[slotId].prevMetrics;
+      evaluateNotifications(slotId, prev, slotData.metrics, config, state, options);
+      state[slotId].prevMetrics = slotData.metrics;
+    }
+
+    result[slotId] = slotData;
+  }
+
+  // 5. 최신 결과 메모리 캐싱
   latestPollResult = result;
 
   return result;
@@ -340,4 +470,8 @@ module.exports = {
   startPolling,
   getLatestPollResult,
   resetPollerState,
+  cleanupSlot,
+  cleanupRemovedSlots,
+  recordWindowNotified,
+  hasNotifiedWindow,
 };
