@@ -332,7 +332,7 @@ function registerIpcHandlers({
     setPinned(pinned);
     const win = getMainWindow();
     if (win && !win.isDestroyed?.() && typeof win.setAlwaysOnTop === 'function') {
-      win.setAlwaysOnTop(true);
+      win.setAlwaysOnTop(pinned);
     }
     return { success: true, isPinned: getPinned() };
   });

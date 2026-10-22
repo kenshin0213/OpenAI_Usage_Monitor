@@ -590,7 +590,7 @@ describe('메인 프로세스 IPC 핸들러 통합 (registerIpcHandlers)', () =>
     }, /안전하지 않거나 유효하지 않은 URL 프로토콜/);
   });
 
-  it('set-pin-mode & get-pin-mode: 핀 모드 활성화 시 상태를 갱신하고 mainWindow.setAlwaysOnTop(true)를 호출해야 한다', async () => {
+  it('set-pin-mode & get-pin-mode: 핀 모드 활성화/비활성화 시 상태를 갱신하고 mainWindow.setAlwaysOnTop(pinned)를 호출해야 한다', async () => {
     const setPinHandler = handlers.get('set-pin-mode');
     const getPinHandler = handlers.get('get-pin-mode');
 
@@ -606,6 +606,7 @@ describe('메인 프로세스 IPC 핸들러 통합 (registerIpcHandlers)', () =>
     const resOff = await setPinHandler({}, { isPinned: false });
     assert.strictEqual(resOff.success, true);
     assert.strictEqual(resOff.isPinned, false);
+    assert.strictEqual(mockMainWindow.alwaysOnTop, false);
     assert.strictEqual(mockIsPinned, false);
 
     const getResOff = await getPinHandler();
