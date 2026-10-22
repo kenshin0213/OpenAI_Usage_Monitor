@@ -119,7 +119,11 @@ if (require.main === module) {
     console.log(`  - 앱 번들 디렉터리: ${result.appDir}`);
     console.log(`  - 윈도우 작업 관리자 프로세스명: ${APP_EXE_NAME}`);
   } catch (err) {
-    console.error(`[포터블 빌더] 오류 발생: ${err.message}`);
+    if (err.code === 'EBUSY' || err.code === 'EPERM') {
+      console.error('[포터블 빌더] 오류 발생: 기존 프로세스가 실행 중일 수 있습니다. 실행 중인 OpenAI_Usage_Monitor.exe를 종료한 후 다시 시도해 주세요.');
+    } else {
+      console.error(`[포터블 빌더] 오류 발생: ${err.message}`);
+    }
     process.exit(1);
   }
 }

@@ -37,7 +37,7 @@
 }
 
 /* ==========================================================================
-   Light Theme CSS Variables
+   라이트 테마 CSS 변수
    ========================================================================== */
 [data-theme="light"],
 body[data-theme="light"] {
@@ -85,7 +85,7 @@ body[data-theme="light"] {
   background-color: rgba(0, 0, 0, 0.15);
 }
 
-/* Base Reset & Typography */
+/* 기본 리셋 및 타이포그래피 */
 * {
   margin: 0;
   padding: 0;
@@ -108,7 +108,7 @@ body {
   overflow-y: auto;
 }
 
-/* Custom Scrollbar */
+/* 커스텀 스크롤바 */
 body::-webkit-scrollbar {
   width: 5px;
 }
@@ -123,7 +123,7 @@ body::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.25);
 }
 
-/* App Container */
+/* 앱 컨테이너 */
 .app-container {
   display: flex;
   flex-direction: column;
@@ -133,7 +133,7 @@ body::-webkit-scrollbar-thumb:hover {
 }
 
 /* ==========================================================================
-   Header Section & Drag Controls
+   헤더 섹션 및 드래그 컨트롤
    ========================================================================== */
 .header,
 .app-header {
@@ -145,7 +145,7 @@ body::-webkit-scrollbar-thumb:hover {
   border-bottom: 1px solid var(--border-subtle);
 }
 
-/* All interactive elements must be non-draggable */
+/* 모든 상호작용 요소는 드래그 불가(-webkit-app-region: no-drag) */
 button,
 input,
 select,
@@ -199,7 +199,7 @@ select,
   color: var(--text-muted);
 }
 
-/* Status Dot Indicator */
+/* 상태 인디케이터 점 */
 .status-indicator {
   width: 7px;
   height: 7px;
@@ -231,7 +231,7 @@ select,
   gap: 4px;
 }
 
-/* Icon Buttons */
+/* 아이콘 버튼 */
 .btn-icon {
   display: inline-flex;
   align-items: center;
@@ -263,7 +263,7 @@ select,
   border-color: var(--color-brand);
 }
 
-/* Spin animation for refresh button */
+/* 새로고침 버튼 회전 애니메이션 */
 @keyframes spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
@@ -275,7 +275,7 @@ select,
 }
 
 /* ==========================================================================
-   Account Cards Container
+   계정 카드 목록 컨테이너
    ========================================================================== */
 .cards-container {
   display: flex;
@@ -287,7 +287,7 @@ select,
   padding-right: 2px;
 }
 
-/* Custom Scrollbar for Cards Container */
+/* 카드 컨테이너 커스텀 스크롤바 */
 .cards-container::-webkit-scrollbar {
   width: 5px;
 }
@@ -405,7 +405,7 @@ select,
   max-width: 170px;
 }
 
-/* Slot Badges */
+/* 슬롯 배지 */
 .slot-badge {
   font-size: 11px;
   font-weight: 700;
@@ -434,7 +434,7 @@ select,
   border: 1px solid rgba(168, 85, 247, 0.35);
 }
 
-/* Plan Badges */
+/* 플랜 배지 */
 .plan-badge {
   font-size: 10px;
   font-weight: 700;
@@ -471,7 +471,7 @@ select,
 }
 
 /* ==========================================================================
-   Metric Blocks & Progress Bars
+   메트릭 블록 및 진행률 바
    ========================================================================== */
 .card-body {
   display: flex;
@@ -504,7 +504,7 @@ select,
   font-variant-numeric: tabular-nums;
 }
 
-/* Progress Track & Fill */
+/* 진행률 트랙 및 채움 */
 .progress-track {
   width: 100%;
   height: 7px;
@@ -520,7 +520,7 @@ select,
   transition: var(--transition-bar);
 }
 
-/* Color Cues: Green > 30%, Yellow 11-30%, Red <= 10% */
+/* 잔여량 컬러 큐: 30% 초과 녹색, 11-30% 황색, 10% 이하 적색 */
 .progress-green {
   background: linear-gradient(90deg, #059669 0%, #10a37f 60%, #34d399 100%);
   box-shadow: 0 0 8px rgba(16, 163, 127, 0.35);
@@ -554,7 +554,7 @@ select,
 }
 
 /* ==========================================================================
-   Slot 2 Specific Views (Unlinked / Logging in / Linked)
+   슬롯 상태별 뷰 (미연동 / 연동 진행 중 / 연동 완료)
    ========================================================================== */
 .slot-state-view {
   display: flex;
@@ -591,7 +591,7 @@ select,
   color: var(--text-primary);
 }
 
-/* Spinner */
+/* 스피너 애니메이션 */
 .spinner {
   width: 24px;
   height: 24px;
@@ -601,7 +601,7 @@ select,
   margin-bottom: 4px;
 }
 
-/* Buttons */
+/* 공통 버튼 */
 .btn {
   display: inline-flex;
   align-items: center;
@@ -663,7 +663,7 @@ select,
 }
 
 /* ==========================================================================
-   Toast Notification Banner
+   토스트 알림 배너
    ========================================================================== */
 .toast-banner {
   position: fixed;
@@ -695,7 +695,7 @@ select,
 }
 
 /* ==========================================================================
-   Settings Modal Dialog
+   설정 모달 대화상자
    ========================================================================== */
 .modal-backdrop {
   position: fixed;
@@ -785,7 +785,7 @@ select,
   line-height: 1.35;
 }
 
-/* Select Input */
+/* 셀렉트 드롭다운 */
 .setting-select {
   width: 100%;
   padding: 6px 10px;
@@ -803,7 +803,7 @@ select,
   border-color: var(--color-brand);
 }
 
-/* Range Slider */
+/* 범위 슬라이더 */
 .range-container {
   display: flex;
   align-items: center;
@@ -845,7 +845,7 @@ select,
   text-align: right;
 }
 
-/* Toggle Switch */
+/* 토글 스위치 */
 .switch {
   position: relative;
   display: inline-block;
@@ -898,7 +898,7 @@ input:checked + .slider:before {
   border-top: 1px solid var(--border-subtle);
 }
 
-/* Utility Classes */
+/* 유틸리티 클래스 */
 .hidden {
   display: none !important;
 }

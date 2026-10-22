@@ -294,15 +294,9 @@ async function logoutSlot(slotId, options = {}) {
   const normalizedId = normalizeSlotId(slotId);
 
   // 프로필 폴더 내 auth.json 삭제 (auth 모듈 위임)
-  try {
-    const auth = require('./auth');
-    if (typeof auth.logoutSlot === 'function') {
-      await auth.logoutSlot(normalizedId, options);
-    }
-  } catch (err) {
-    if (err.code !== 'ENOENT') {
-      throw err;
-    }
+  const auth = require('./auth');
+  if (typeof auth.logoutSlot === 'function') {
+    await auth.logoutSlot(normalizedId, options);
   }
 
   // 슬롯 파일 데이터 초기화

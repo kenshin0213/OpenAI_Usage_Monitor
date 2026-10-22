@@ -155,15 +155,30 @@ describe('UI 컴포넌트 및 렌더러 단위 테스트', () => {
       assert.ok(html.includes('로그아웃'));
     });
 
-    it('3개 이상의 슬롯에서 미연동 카드에는 "카드 삭제" 버튼이 포함되어야 한다', () => {
+    it('3개 이상의 슬롯에서 번호가 2를 초과하는 미연동 카드에만 "카드 삭제" 버튼이 포함되어야 한다', () => {
       const slotsData = {
-        slot1: { linked: true, email: 'a@test.com' },
+        slot1: { linked: false },
         slot2: { linked: false },
-        slot3: { linked: false }
+        slot3: { linked: false },
+        slot4: { linked: false }
       };
       const html = generateSlotsHtml(slotsData);
-      assert.ok(html.includes('카드 삭제'));
-      assert.ok(html.includes('data-slot="slot3"'));
+      // slot3, slot4는 미연동이고 번호 > 2이므로 삭제 버튼 표시
+      assert.ok(html.includes('btn-delete-slot" data-slot="slot3"'));
+      assert.ok(html.includes('btn-delete-slot" data-slot="slot4"'));
+      // 기본 슬롯(slot1, slot2)은 미연동이라도 삭제 버튼이 표시되지 않아야 함
+      assert.ok(!html.includes('btn-delete-slot" data-slot="slot1"'));
+      assert.ok(!html.includes('btn-delete-slot" data-slot="slot2"'));
+    });
+
+    it('총 슬롯이 2개 이하인 경우 어떤 슬롯에도 "카드 삭제" 버튼이 포함되지 않아야 한다', () => {
+      const slotsData = {
+        slot1: { linked: false },
+        slot2: { linked: false }
+      };
+      const html = generateSlotsHtml(slotsData);
+      assert.ok(!html.includes('카드 삭제'));
+      assert.ok(!html.includes('btn-delete-slot'));
     });
   });
 

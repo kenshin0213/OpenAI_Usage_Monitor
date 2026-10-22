@@ -167,7 +167,7 @@ function generateSlotsHtml(slotsData = {}, state = {}) {
     const badgeClass = getSlotBadgeClass(slotId);
     const isLoggingIn = Boolean(state?.loggingSlots?.[slotId]);
     const isLinked = Boolean(slot.linked);
-    const isExtraSlot = totalSlots > 2 || parseInt(slotNum, 10) > 2;
+    const isExtraSlot = totalSlots > 2 && parseInt(slotNum, 10) > 2;
 
     // 1. 로그인 진행 중 상태 카드
     if (isLoggingIn) {

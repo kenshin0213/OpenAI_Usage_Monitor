@@ -267,7 +267,7 @@ function evaluateNotifications(slotId, prevMetrics, currMetrics, config = {}, st
 
 /**
  * Settled Promise 결과를 표준 슬롯 상태 객체로 정규화합니다.
- * @param {'slot1' | 'slot2'} slotId 
+ * @param {string} slotId 
  * @param {PromiseSettledResult<object>} settledResult 
  * @returns {object}
  */
