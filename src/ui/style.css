@@ -85,6 +85,30 @@ body[data-theme="light"] {
   background-color: rgba(0, 0, 0, 0.15);
 }
 
+[data-theme="light"] .btn-link-account {
+  background-color: #f0f9ff;
+  border-color: rgba(2, 132, 199, 0.35);
+  color: #0284c7;
+}
+
+[data-theme="light"] .btn-link-account:hover {
+  background-color: #0284c7;
+  border-color: #0284c7;
+  color: #ffffff;
+  box-shadow: 0 2px 12px rgba(2, 132, 199, 0.25);
+}
+
+[data-theme="light"] .btn-secondary {
+  background-color: #f1f5f9;
+  border-color: rgba(0, 0, 0, 0.12);
+  color: #334155;
+}
+
+[data-theme="light"] .btn-secondary:hover {
+  background-color: #e2e8f0;
+  color: #0f172a;
+}
+
 /* 기본 리셋 및 타이포그래피 */
 * {
   margin: 0;
@@ -670,13 +694,14 @@ select,
   bottom: 12px;
   left: 14px;
   right: 14px;
-  background-color: #27272a;
-  border: 1px solid var(--border-subtle);
+  background-color: #202126;
+  border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: var(--radius-md);
-  padding: 9px 12px;
+  padding: 10px 14px;
   font-size: 12px;
-  color: var(--text-primary);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  font-weight: 500;
+  color: #ececf1;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -684,14 +709,35 @@ select,
   transition: opacity 0.25s ease, transform 0.25s ease;
 }
 
+[data-theme="light"] .toast-banner {
+  background-color: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  color: #18181b;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14), 0 2px 6px rgba(0, 0, 0, 0.06);
+}
+
 .toast-banner.toast-success {
+  background-color: #1a2e26;
   border-color: rgba(16, 163, 127, 0.5);
   color: #a7f3d0;
 }
 
+[data-theme="light"] .toast-banner.toast-success {
+  background-color: #ecfdf5;
+  border-color: rgba(13, 138, 106, 0.35);
+  color: #065f46;
+}
+
 .toast-banner.toast-error {
+  background-color: #2e1a1a;
   border-color: rgba(239, 68, 68, 0.5);
   color: #fca5a5;
+}
+
+[data-theme="light"] .toast-banner.toast-error {
+  background-color: #fef2f2;
+  border-color: rgba(220, 38, 38, 0.35);
+  color: #991b1b;
 }
 
 /* ==========================================================================

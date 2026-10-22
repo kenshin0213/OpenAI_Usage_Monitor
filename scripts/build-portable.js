@@ -42,29 +42,42 @@ function buildPortable(options = {}) {
   }
 
   // 2. 대상 디렉터리 초기화 및 생성
+  let needFullCopy = true;
   if (fs.existsSync(targetDir)) {
-    fs.rmSync(targetDir, { recursive: true, force: true });
-  }
-  fs.mkdirSync(targetDir, { recursive: true });
-
-  // 3. Electron 바이너리 파일 복사 (default_app.asar 제외)
-  fs.cpSync(sourceDistDir, targetDir, {
-    recursive: true,
-    filter: (source) => {
-      const base = path.basename(source);
-      if (base === 'default_app.asar') {
-        return false;
+    try {
+      fs.rmSync(targetDir, { recursive: true, force: true });
+    } catch (err) {
+      if (err.code === 'EBUSY' || err.code === 'EPERM') {
+        console.warn('[포터블 빌더] 프로세스가 실행 중이어서 전체 디렉터리 삭제 대신 resources/app 소스 번들만 즉시 갱신합니다.');
+        needFullCopy = false;
+      } else {
+        throw err;
       }
-      return true;
-    },
-  });
+    }
+  }
 
-  // 4. electron.exe -> OpenAI_Usage_Monitor.exe 이름 변경
-  const targetElectronExe = path.join(targetDir, 'electron.exe');
-  if (fs.existsSync(targetElectronExe)) {
-    fs.renameSync(targetElectronExe, executablePath);
-  } else if (!fs.existsSync(executablePath)) {
-    throw new Error(`실행 파일 이름 변경 실패: ${targetElectronExe}가 존재하지 않습니다.`);
+  if (needFullCopy) {
+    fs.mkdirSync(targetDir, { recursive: true });
+
+    // 3. Electron 바이너리 파일 복사 (default_app.asar 제외)
+    fs.cpSync(sourceDistDir, targetDir, {
+      recursive: true,
+      filter: (source) => {
+        const base = path.basename(source);
+        if (base === 'default_app.asar') {
+          return false;
+        }
+        return true;
+      },
+    });
+
+    // 4. electron.exe -> OpenAI_Usage_Monitor.exe 이름 변경
+    const targetElectronExe = path.join(targetDir, 'electron.exe');
+    if (fs.existsSync(targetElectronExe)) {
+      fs.renameSync(targetElectronExe, executablePath);
+    } else if (!fs.existsSync(executablePath)) {
+      throw new Error(`실행 파일 이름 변경 실패: ${targetElectronExe}가 존재하지 않습니다.`);
+    }
   }
 
   // 5. resources/app 디렉터리 구성 및 앱 소스 복사
