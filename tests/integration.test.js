@@ -33,6 +33,8 @@ const {
   calculateWindowPosition,
   createTrayMenuTemplate,
   registerIpcHandlers,
+  getPinState,
+  setPinState,
 } = require('../src/main.js');
 
 // ============================================================================
@@ -96,6 +98,14 @@ describe('Preload 보안 브릿지 (src/preload.js)', () => {
     assert.strictEqual(typeof exposedApi.openExternal, 'function');
     assert.strictEqual(typeof exposedApi.onUsageUpdate, 'function');
     assert.strictEqual(typeof exposedApi.onUsageUpdated, 'function');
+    // 신규 추가 API (Task 4)
+    assert.strictEqual(typeof exposedApi.setPinMode, 'function');
+    assert.strictEqual(typeof exposedApi.getPinMode, 'function');
+    assert.strictEqual(typeof exposedApi.closeWindow, 'function');
+    assert.strictEqual(typeof exposedApi.setTheme, 'function');
+    assert.strictEqual(typeof exposedApi.logoutSlot, 'function');
+    assert.strictEqual(typeof exposedApi.addSlot, 'function');
+    assert.strictEqual(typeof exposedApi.removeSlot, 'function');
   });
 
   it('각 API 호출 시 올바른 IPC 채널과 인자를 전달해야 한다', async () => {
@@ -142,6 +152,42 @@ describe('Preload 보안 브릿지 (src/preload.js)', () => {
     await exposedApi.openExternal('https://chatgpt.com');
     assert.strictEqual(invokeCalls[8].channel, 'open-external');
     assert.deepStrictEqual(invokeCalls[8].args, ['https://chatgpt.com']);
+
+    // 신규 추가 API (Task 4)
+    // setPinMode -> set-pin-mode
+    await exposedApi.setPinMode({ isPinned: true });
+    assert.strictEqual(invokeCalls[9].channel, 'set-pin-mode');
+    assert.deepStrictEqual(invokeCalls[9].args, [{ isPinned: true }]);
+
+    // getPinMode -> get-pin-mode
+    await exposedApi.getPinMode();
+    assert.strictEqual(invokeCalls[10].channel, 'get-pin-mode');
+    assert.deepStrictEqual(invokeCalls[10].args, []);
+
+    // closeWindow -> close-window
+    await exposedApi.closeWindow();
+    assert.strictEqual(invokeCalls[11].channel, 'close-window');
+    assert.deepStrictEqual(invokeCalls[11].args, []);
+
+    // setTheme -> set-theme
+    await exposedApi.setTheme({ theme: 'light' });
+    assert.strictEqual(invokeCalls[12].channel, 'set-theme');
+    assert.deepStrictEqual(invokeCalls[12].args, [{ theme: 'light' }]);
+
+    // logoutSlot -> logout-slot
+    await exposedApi.logoutSlot('slot1');
+    assert.strictEqual(invokeCalls[13].channel, 'logout-slot');
+    assert.deepStrictEqual(invokeCalls[13].args, ['slot1']);
+
+    // addSlot -> add-slot
+    await exposedApi.addSlot();
+    assert.strictEqual(invokeCalls[14].channel, 'add-slot');
+    assert.deepStrictEqual(invokeCalls[14].args, []);
+
+    // removeSlot -> remove-slot
+    await exposedApi.removeSlot('slot3');
+    assert.strictEqual(invokeCalls[15].channel, 'remove-slot');
+    assert.deepStrictEqual(invokeCalls[15].args, ['slot3']);
   });
 
   it('onUsageUpdate는 usage-updated 이벤트를 구독하고 해제 함수를 정상 반환해야 한다', () => {
@@ -320,6 +366,8 @@ describe('메인 프로세스 IPC 핸들러 통합 (registerIpcHandlers)', () =>
   let mockShellModule;
   let mockAppInstance;
   let mockPollerInstance;
+  let mockMainWindow;
+  let mockIsPinned;
   let initialPoller;
   let activeLogins;
   let broadcastedData = null;
@@ -330,6 +378,13 @@ describe('메인 프로세스 IPC 핸들러 통합 (registerIpcHandlers)', () =>
     broadcastedData = null;
     trayMenuUpdated = false;
     activeLogins = new Map();
+    mockIsPinned = false;
+
+    mockMainWindow = {
+      isDestroyed: () => false,
+      hide: () => { mockMainWindow.hidden = true; },
+      setAlwaysOnTop: (flag) => { mockMainWindow.alwaysOnTop = flag; },
+    };
 
     mockIpcMain = {
       handle: (channel, fn) => {
@@ -351,6 +406,7 @@ describe('메인 프로세스 IPC 핸들러 통합 (registerIpcHandlers)', () =>
         pollNow: async () => ({ source: 'newPoller.pollNow' }),
         stop: () => {},
       }),
+      cleanupSlot: (slotId) => { mockPollerModule.cleanedSlot = slotId; },
     };
 
     mockAuthModule = {
@@ -368,6 +424,9 @@ describe('메인 프로세스 IPC 핸들러 통합 (registerIpcHandlers)', () =>
       normalizeSlotId: (s) => (String(s).includes('2') ? 'slot2' : 'slot1'),
       getConfig: async () => ({ pollIntervalMinutes: 5, startOnBoot: false }),
       updateConfig: async (patch) => ({ pollIntervalMinutes: 5, ...patch }),
+      logoutSlot: async (slotId) => ({ success: true, slotId, loggedOut: true }),
+      addSlot: async () => ({ slotId: 'slot3', slots: ['slot1', 'slot2', 'slot3'] }),
+      removeSlot: async (slotId) => ({ success: true, removedSlot: slotId, slots: ['slot1', 'slot2'] }),
     };
 
     mockShellModule = {
@@ -390,10 +449,13 @@ describe('메인 프로세스 IPC 핸들러 통합 (registerIpcHandlers)', () =>
       broadcastUsage: (d) => { broadcastedData = d; },
       updateTrayMenu: () => { trayMenuUpdated = true; },
       appInstance: mockAppInstance,
+      getMainWindow: () => mockMainWindow,
+      getPinState: () => mockIsPinned,
+      setPinState: (v) => { mockIsPinned = Boolean(v); return mockIsPinned; },
     });
   });
 
-  it('필수 7개 IPC 채널이 모두 등록되어야 한다', () => {
+  it('필수 IPC 채널(기존 7개 + 신규 7개)이 모두 등록되어야 한다', () => {
     const requiredChannels = [
       'get-usage',
       'refresh-now',
@@ -402,6 +464,13 @@ describe('메인 프로세스 IPC 핸들러 통합 (registerIpcHandlers)', () =>
       'get-config',
       'save-config',
       'open-external',
+      'set-pin-mode',
+      'get-pin-mode',
+      'close-window',
+      'set-theme',
+      'logout-slot',
+      'add-slot',
+      'remove-slot',
     ];
 
     for (const channel of requiredChannels) {
@@ -519,5 +588,73 @@ describe('메인 프로세스 IPC 핸들러 통합 (registerIpcHandlers)', () =>
     await assert.rejects(async () => {
       await openHandler({}, null);
     }, /안전하지 않거나 유효하지 않은 URL 프로토콜/);
+  });
+
+  it('set-pin-mode & get-pin-mode: 핀 모드 활성화 시 상태를 갱신하고 mainWindow.setAlwaysOnTop(true)를 호출해야 한다', async () => {
+    const setPinHandler = handlers.get('set-pin-mode');
+    const getPinHandler = handlers.get('get-pin-mode');
+
+    const res = await setPinHandler({}, { isPinned: true });
+    assert.strictEqual(res.success, true);
+    assert.strictEqual(res.isPinned, true);
+    assert.strictEqual(mockMainWindow.alwaysOnTop, true);
+    assert.strictEqual(mockIsPinned, true);
+
+    const getRes = await getPinHandler();
+    assert.strictEqual(getRes.isPinned, true);
+
+    const resOff = await setPinHandler({}, { isPinned: false });
+    assert.strictEqual(resOff.success, true);
+    assert.strictEqual(resOff.isPinned, false);
+    assert.strictEqual(mockIsPinned, false);
+
+    const getResOff = await getPinHandler();
+    assert.strictEqual(getResOff.isPinned, false);
+  });
+
+  it('close-window: mainWindow.hide()를 호출하고 success: true를 반환해야 한다', async () => {
+    const closeHandler = handlers.get('close-window');
+    const res = await closeHandler();
+    assert.strictEqual(res.success, true);
+    assert.strictEqual(mockMainWindow.hidden, true);
+  });
+
+  it('set-theme: configModule.updateConfig({ theme })를 호출하고 success: true를 반환해야 한다', async () => {
+    const setThemeHandler = handlers.get('set-theme');
+    const res = await setThemeHandler({}, { theme: 'light' });
+    assert.strictEqual(res.success, true);
+    assert.strictEqual(res.theme, 'light');
+  });
+
+  it('logout-slot: configModule.logoutSlot을 호출하고 사용량을 새로고침 및 브로드캐스트해야 한다', async () => {
+    const logoutHandler = handlers.get('logout-slot');
+    const res = await logoutHandler({}, 'slot1');
+    assert.strictEqual(res.success, true);
+    assert.strictEqual(res.loggedOut, true);
+    assert.ok(broadcastedData);
+  });
+
+  it('add-slot: configModule.addSlot을 호출하고 결과를 반환해야 한다', async () => {
+    const addHandler = handlers.get('add-slot');
+    const res = await addHandler();
+    assert.strictEqual(res.slotId, 'slot3');
+    assert.deepStrictEqual(res.slots, ['slot1', 'slot2', 'slot3']);
+  });
+
+  it('remove-slot: configModule.removeSlot 및 poller.cleanupSlot을 호출하고 사용량을 새로고침해야 한다', async () => {
+    const removeHandler = handlers.get('remove-slot');
+    const res = await removeHandler({}, 'slot3');
+    assert.strictEqual(res.success, true);
+    assert.strictEqual(mockPollerModule.cleanedSlot, 'slot3');
+    assert.ok(broadcastedData);
+  });
+
+  it('getPinState & setPinState: 핀 상태 조회 및 변경 함수 무결성', () => {
+    assert.strictEqual(typeof getPinState, 'function');
+    assert.strictEqual(typeof setPinState, 'function');
+    setPinState(true);
+    assert.strictEqual(getPinState(), true);
+    setPinState(false);
+    assert.strictEqual(getPinState(), false);
   });
 });

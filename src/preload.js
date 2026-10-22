@@ -69,6 +69,19 @@ function exposeElectronApi(bridge, ipc) {
         targetIpc.removeListener('usage-updated', listener);
       };
     },
+
+    // 7. 창 제어 및 핀(상단 고정) 모드 제어
+    setPinMode: (payload) => targetIpc.invoke('set-pin-mode', payload),
+    getPinMode: () => targetIpc.invoke('get-pin-mode'),
+    closeWindow: () => targetIpc.invoke('close-window'),
+
+    // 8. 테마 설정
+    setTheme: (payload) => targetIpc.invoke('set-theme', payload),
+
+    // 9. 슬롯 동적 관리 및 세션 로그아웃
+    logoutSlot: (slotId) => targetIpc.invoke('logout-slot', slotId),
+    addSlot: () => targetIpc.invoke('add-slot'),
+    removeSlot: (slotId) => targetIpc.invoke('remove-slot', slotId),
   };
 
   targetBridge.exposeInMainWorld('electronAPI', api);

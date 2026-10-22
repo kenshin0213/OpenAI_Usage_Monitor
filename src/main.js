@@ -149,6 +149,26 @@ function createTrayMenuTemplate({ onOpen, onRefresh, onToggleStartOnBoot, onQuit
   ];
 }
 
+let isPinned = false;
+
+/**
+ * 현재 핀(상단 고정) 상태를 반환합니다.
+ * @returns {boolean}
+ */
+function getPinState() {
+  return isPinned;
+}
+
+/**
+ * 핀(상단 고정) 상태를 설정합니다.
+ * @param {boolean} value 
+ * @returns {boolean} 설정된 핀 상태
+ */
+function setPinState(value) {
+  isPinned = Boolean(value);
+  return isPinned;
+}
+
 /**
  * IPC 핸들러들을 등록합니다.
  * 
@@ -164,6 +184,9 @@ function createTrayMenuTemplate({ onOpen, onRefresh, onToggleStartOnBoot, onQuit
  * @param {Function} [params.broadcastUsage] 사용량 브로드캐스트 함수
  * @param {Function} [params.updateTrayMenu] 트레이 메뉴 갱신 함수
  * @param {object} [params.appInstance] Electron app 객체
+ * @param {Function} [params.getMainWindow] 메인 윈도우 인스턴스 반환 함수
+ * @param {Function} [params.getPinState] 핀 상태 조회 함수
+ * @param {Function} [params.setPinState] 핀 상태 변경 함수
  */
 function registerIpcHandlers({
   ipcMain,
@@ -177,6 +200,9 @@ function registerIpcHandlers({
   broadcastUsage = () => {},
   updateTrayMenu = () => {},
   appInstance = (typeof electron === 'object' ? electron.app : null),
+  getMainWindow = () => mainWindow,
+  getPinState: getPinned = getPinState,
+  setPinState: setPinned = setPinState,
 }) {
   if (!ipcMain || typeof ipcMain.handle !== 'function') {
     return;
@@ -298,6 +324,79 @@ function registerIpcHandlers({
       return { success: true };
     }
     return { success: false, message: 'shell API를 사용할 수 없습니다.' };
+  });
+
+  // 8. 핀(상단 고정) 모드 설정
+  ipcMain.handle('set-pin-mode', async (_event, payload) => {
+    const pinned = Boolean(payload?.isPinned);
+    setPinned(pinned);
+    const win = getMainWindow();
+    if (win && !win.isDestroyed?.() && typeof win.setAlwaysOnTop === 'function') {
+      win.setAlwaysOnTop(true);
+    }
+    return { success: true, isPinned: getPinned() };
+  });
+
+  // 9. 핀(상단 고정) 상태 조회
+  ipcMain.handle('get-pin-mode', async () => {
+    return { isPinned: getPinned() };
+  });
+
+  // 10. 윈도우 숨김 (닫기 버튼)
+  ipcMain.handle('close-window', async () => {
+    const win = getMainWindow();
+    if (win && !win.isDestroyed?.() && typeof win.hide === 'function') {
+      win.hide();
+    }
+    return { success: true };
+  });
+
+  // 11. 테마 설정 (dark / light)
+  ipcMain.handle('set-theme', async (_event, payload) => {
+    const theme = payload?.theme === 'light' ? 'light' : 'dark';
+    await cfg.updateConfig({ theme });
+    return { success: true, theme };
+  });
+
+  // 12. 슬롯 로그아웃
+  ipcMain.handle('logout-slot', async (_event, slotId) => {
+    const res = await cfg.logoutSlot(slotId);
+    let pollRes = null;
+    const currentPoller = getPollerInstance();
+    if (currentPoller && typeof currentPoller.pollNow === 'function') {
+      pollRes = await currentPoller.pollNow();
+    } else if (typeof poller.pollAllSlots === 'function') {
+      pollRes = await poller.pollAllSlots();
+    }
+    if (typeof broadcastUsage === 'function' && pollRes) {
+      broadcastUsage(pollRes);
+    }
+    return res || { success: true };
+  });
+
+  // 13. 슬롯 추가
+  ipcMain.handle('add-slot', async () => {
+    const res = await cfg.addSlot();
+    return res;
+  });
+
+  // 14. 슬롯 삭제
+  ipcMain.handle('remove-slot', async (_event, slotId) => {
+    const res = await cfg.removeSlot(slotId);
+    if (typeof poller.cleanupSlot === 'function') {
+      poller.cleanupSlot(slotId);
+    }
+    let pollRes = null;
+    const currentPoller = getPollerInstance();
+    if (currentPoller && typeof currentPoller.pollNow === 'function') {
+      pollRes = await currentPoller.pollNow();
+    } else if (typeof poller.pollAllSlots === 'function') {
+      pollRes = await poller.pollAllSlots();
+    }
+    if (typeof broadcastUsage === 'function' && pollRes) {
+      broadcastUsage(pollRes);
+    }
+    return res;
   });
 }
 
@@ -453,6 +552,7 @@ function createWindow() {
     height: 530,
     frame: false,
     resizable: false,
+    movable: true,
     show: false,
     alwaysOnTop: true,
     skipTaskbar: true,
@@ -467,12 +567,14 @@ function createWindow() {
   const htmlPath = path.join(__dirname, 'ui', 'index.html');
   mainWindow.loadFile(htmlPath);
 
-  // 포커스를 잃었을 때(blur) 자동 숨김 (개발자 도구가 열려있지 않은 경우)
+  // 포커스를 잃었을 때(blur) 자동 숨김 (고정 모드가 아니고 개발자 도구가 열려있지 않은 경우)
   mainWindow.on('blur', () => {
     lastBlurTime = Date.now();
     if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
       if (!mainWindow.webContents.isDevToolsOpened()) {
-        mainWindow.hide();
+        if (!isPinned) {
+          mainWindow.hide();
+        }
       }
     }
   });
@@ -519,6 +621,9 @@ async function initApp() {
     broadcastUsage,
     updateTrayMenu,
     appInstance: electron.app,
+    getMainWindow: () => mainWindow,
+    getPinState,
+    setPinState,
   });
 
   // 5. 백그라운드 사용량 폴러 시작 및 시작 시 자동 실행 레지스트리 동기화
@@ -601,4 +706,6 @@ module.exports = {
   showWindow,
   toggleWindow,
   updateTrayMenu,
+  getPinState,
+  setPinState,
 };
