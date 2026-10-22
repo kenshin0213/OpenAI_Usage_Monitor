@@ -216,9 +216,9 @@ describe('config.js - 계정 슬롯 및 설정 관리자', () => {
 
   describe('seedSlot1FromCodex (PC 세션 자동 복사 검증)', () => {
     it('유효한 ~/.codex/auth.json 파일로부터 slot1으로 토큰 및 이메일을 자동 임포트해야 한다', async () => {
-      // JWT mock 생성 (payload: { email: "dt.infra1009@gmail.com" })
+      // JWT mock 생성 (payload: { email: "user1@example.com" })
       const headerB64 = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64');
-      const payloadB64 = Buffer.from(JSON.stringify({ email: 'dt.infra1009@gmail.com' })).toString('base64');
+      const payloadB64 = Buffer.from(JSON.stringify({ email: 'user1@example.com' })).toString('base64');
       const mockIdToken = `${headerB64}.${payloadB64}.fake_signature`;
 
       const mockCodexAuth = {
@@ -239,14 +239,14 @@ describe('config.js - 계정 슬롯 및 설정 관리자', () => {
       const result = await seedSlot1FromCodex({ codexAuthPath: mockCodexPath });
 
       assert.strictEqual(result.success, true);
-      assert.strictEqual(result.slot.email, 'dt.infra1009@gmail.com');
+      assert.strictEqual(result.slot.email, 'user1@example.com');
       assert.strictEqual(result.slot.tokens.access_token, 'mock_access_token_123');
       assert.strictEqual(result.slot.tokens.refresh_token, 'mock_refresh_token_456');
 
       // slot1 저장소 검증
       const savedSlot1 = await getSlot('slot1');
       assert.ok(savedSlot1);
-      assert.strictEqual(savedSlot1.email, 'dt.infra1009@gmail.com');
+      assert.strictEqual(savedSlot1.email, 'user1@example.com');
       assert.strictEqual(savedSlot1.tokens.refresh_token, 'mock_refresh_token_456');
 
       // slot2는 영향이 없어야 함
