@@ -46,8 +46,8 @@ const { sendNotification } = notifierModule;
  * @returns {{ x: number, y: number }} 계산된 윈도우 좌상단 좌표
  */
 function calculateWindowPosition(trayBounds, windowBounds, displayBounds, options = {}) {
-  const windowWidth = (windowBounds && typeof windowBounds.width === 'number') ? windowBounds.width : 380;
-  const windowHeight = (windowBounds && typeof windowBounds.height === 'number') ? windowBounds.height : 530;
+  const windowWidth = (windowBounds && typeof windowBounds.width === 'number') ? windowBounds.width : 420;
+  const windowHeight = (windowBounds && typeof windowBounds.height === 'number') ? windowBounds.height : 560;
 
   const dispX = (displayBounds && typeof displayBounds.x === 'number') ? displayBounds.x : 0;
   const dispY = (displayBounds && typeof displayBounds.y === 'number') ? displayBounds.y : 0;
@@ -548,8 +548,9 @@ function createTray() {
  */
 function createWindow() {
   mainWindow = new electron.BrowserWindow({
-    width: 380,
-    height: 530,
+    width: 420,
+    height: 560,
+    useContentSize: true,
     frame: false,
     resizable: false,
     movable: true,

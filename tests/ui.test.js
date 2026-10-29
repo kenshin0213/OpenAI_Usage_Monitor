@@ -261,6 +261,13 @@ describe('UI 컴포넌트 및 렌더러 단위 테스트', () => {
       assert.ok(cssContent.includes('.btn-delete-slot'));
       assert.ok(cssContent.includes('.btn-add-slot'));
     });
+
+    it('고해상도 및 멀티 DPI 환경에서 잘림 방지를 위한 반응형 Flex 및 클리핑 방지 스타일이 정의되어 있어야 한다', () => {
+      assert.ok(cssContent.includes('.header-actions'));
+      assert.ok(cssContent.includes('flex-shrink: 0'));
+      assert.ok(cssContent.includes('text-overflow: ellipsis'));
+      assert.ok(cssContent.includes('.account-email'));
+    });
   });
 
   describe('MonitorRenderer - 가상 DOM 기반 상태 바인딩 및 이벤트 동작 검증', () => {

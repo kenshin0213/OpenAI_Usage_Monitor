@@ -292,6 +292,12 @@ describe('트레이 팝업 위치 계산 엔진 (calculateWindowPosition)', () =
     assert.strictEqual(posZero.y, 1080 - 530 - 8);
   });
 
+  it('windowBounds가 생략된 경우 기본값(420x560)을 사용하여 안전 좌표를 계산해야 한다', () => {
+    const posDefault = calculateWindowPosition(null, null, displayBounds, { margin: 8 });
+    assert.strictEqual(posDefault.x, 1920 - 420 - 8);
+    assert.strictEqual(posDefault.y, 1080 - 560 - 8);
+  });
+
   it('화면 왼쪽 또는 상단 경계를 벗어나는 극단적 좌표도 화면 내로 안전하게 클램핑해야 한다', () => {
     const trayBounds = { x: -50, y: 1040, width: 24, height: 24 };
     const pos = calculateWindowPosition(trayBounds, windowBounds, displayBounds, { margin: 8 });
